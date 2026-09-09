@@ -64,6 +64,7 @@ def commit_install(plans, dry_run):
         return
     prepared = []
     backups = []
+    completed = False
     try:
         for action, data, target, mode in plans:
             if action == "install":
@@ -77,22 +78,37 @@ def commit_install(plans, dry_run):
                 os.replace(target, backup)
             backups.append((target, backup))
             os.replace(temporary, target)
-    except Exception:
+        completed = True
+    except Exception as install_error:
+        rollback_errors = []
         for target, backup in reversed(backups):
-            try:
-                if target.exists() or target.is_symlink():
-                    target.unlink()
-                if backup is not None:
+            if backup is not None and (backup.exists() or backup.is_symlink()):
+                try:
+                    # Replacing the target directly preserves both the current
+                    # target and the sole prior-byte backup if restoration fails.
                     os.replace(backup, target)
-            except OSError:
-                pass
+                except OSError as rollback_error:
+                    rollback_errors.append("%s: %s" % (target, rollback_error))
+            elif backup is None:
+                try:
+                    if target.exists() or target.is_symlink():
+                        target.unlink()
+                except OSError as rollback_error:
+                    rollback_errors.append("%s: %s" % (target, rollback_error))
+        if rollback_errors:
+            raise RuntimeError(
+                "installation failed; prior bytes retained in rollback backup; "
+                "manual recovery required: " + "; ".join(rollback_errors)
+            ) from install_error
+        raise
         raise
     finally:
         for _, temporary in prepared:
             temporary.unlink(missing_ok=True)
-        for _, backup in backups:
-            if backup is not None:
-                backup.unlink(missing_ok=True)
+        if completed:
+            for _, backup in backups:
+                if backup is not None:
+                    backup.unlink(missing_ok=True)
 
 
 def remove_managed_file(target, dry_run):

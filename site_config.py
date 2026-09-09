@@ -32,7 +32,12 @@ def _exact_keys(value, expected, label):
 
 
 def _string(value, label, maximum=512):
-    if not isinstance(value, str) or not value or len(value) > maximum or "\x00" in value:
+    if (
+        not isinstance(value, str)
+        or not value
+        or len(value) > maximum
+        or any(ord(character) < 0x20 or ord(character) == 0x7F for character in value)
+    ):
         raise ConfigError("%s must be a non-empty string" % label)
     return value
 
@@ -80,7 +85,7 @@ def validate(config):
     _string(app["description"], "app.description", 300)
     support = _string(app["support_url"], "app.support_url", 500)
     parsed = urlparse(support)
-    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
+    if not support.startswith("https://") or parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise ConfigError("app.support_url must be an HTTPS URL without credentials, query, or fragment")
     restore_name = _string(app["restore_directory_name"], "app.restore_directory_name", 128)
     if restore_name in (".", "..") or "/" in restore_name or not _PATH_COMPONENT.match(restore_name):

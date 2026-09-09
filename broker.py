@@ -63,9 +63,15 @@ def load_environment():
     except OSError as error:
         raise BrokerError("unable to open broker environment") from error
     details = os.fstat(descriptor)
-    if not stat.S_ISREG(details.st_mode) or details.st_uid != 0 or details.st_gid != 0 or details.st_mode & 0o077:
+    if (
+        not stat.S_ISREG(details.st_mode)
+        or details.st_nlink != 1
+        or details.st_uid != 0
+        or details.st_gid != 0
+        or stat.S_IMODE(details.st_mode) != 0o600
+    ):
         os.close(descriptor)
-        raise BrokerError("broker environment must be root-owned mode 0600")
+        raise BrokerError("broker environment must be a single-link root:root regular file mode 0600")
     with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
         for raw_line in handle:
             line = raw_line.strip()

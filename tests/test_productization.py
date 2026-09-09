@@ -62,14 +62,20 @@ class ConfigurationTests(unittest.TestCase):
     def test_schema_and_runtime_reject_the_same_security_variants(self):
         schema = json.loads((ROOT / "config/site.schema.json").read_text())
         variants = (
+            ("broker", "archive_name", "archive\nname"),
             ("broker", "home_root", "/"),
             ("broker", "staging_root", "/var//tmp"),
+            ("broker", "staging_root", "/var/\nrestore"),
             ("broker", "secret_env_file", "/etc/broker.env/"),
             ("portal", "broker_ssh_target", "root@a"),
+            ("portal", "broker_ssh_target", "root@a..b"),
             ("app", "support_url", "https://support.example.test/help"),
             ("app", "support_url", "http://support.example.test/help"),
+            ("app", "support_url", "HTTPS://support.example.test/help"),
             ("app", "support_url", "https://user:pass@support.example.test/help"),
             ("app", "support_url", "https://support.example.test/help?unsafe=1"),
+            ("app", "name", "bad\x00name"),
+            ("app", "description", "bad\nname"),
         )
         for section, key, value in variants:
             with self.subTest(section=section, key=key, value=value):
@@ -128,8 +134,28 @@ class SecurityBoundaryTests(unittest.TestCase):
         with tempfile.NamedTemporaryFile() as environment:
             changed["broker"]["secret_env_file"] = environment.name
             broker._CONFIG = changed
-            with self.assertRaisesRegex(broker.BrokerError, "root-owned mode 0600"):
+            with self.assertRaisesRegex(broker.BrokerError, "single-link root:root regular file mode 0600"):
                 broker.load_environment()
+
+    def test_broker_requires_exact_opened_secret_metadata(self):
+        changed = copy.deepcopy(load(str(ROOT / "config/site.example.json")))
+        with tempfile.NamedTemporaryFile() as environment:
+            changed["broker"]["secret_env_file"] = environment.name
+            broker._CONFIG = changed
+            invalid = (
+                (stat.S_IFREG | 0o400, 1, 0, 0),
+                (stat.S_IFREG | 0o700, 1, 0, 0),
+                (stat.S_IFREG | 0o666, 1, 0, 0),
+                (stat.S_IFREG | 0o600, 2, 0, 0),
+                (stat.S_IFREG | 0o600, 1, 1, 0),
+                (stat.S_IFREG | 0o600, 1, 0, 1),
+            )
+            for mode, links, uid, gid in invalid:
+                details = os.stat_result((mode, 0, 0, links, uid, gid, 0, 0, 0, 0))
+                with self.subTest(mode=oct(mode), links=links, uid=uid, gid=gid), mock.patch.object(
+                    broker.os, "fstat", return_value=details
+                ), self.assertRaisesRegex(broker.BrokerError, "single-link root:root regular file mode 0600"):
+                    broker.load_environment()
 
     def test_client_ssh_command_keeps_pinning_and_forced_identity(self):
         command = client.ssh_command(load(str(ROOT / "config/site.example.json")))
@@ -259,6 +285,33 @@ class InstallerTests(unittest.TestCase):
                     installer.commit_install(plans, False)
             self.assertEqual(first.read_text(), "old-first")
             self.assertEqual(second.read_text(), "old-second")
+
+    def test_installer_preserves_backup_when_rollback_restore_fails(self):
+        with tempfile.TemporaryDirectory() as temp:
+            first = Path(temp) / "first"
+            second = Path(temp) / "second"
+            first.write_text("old-first")
+            second.write_text("old-second")
+            plans = [("install", b"new-first", first, 0o600), ("install", b"new-second", second, 0o600)]
+            real_replace = installer.os.replace
+            failed_install = False
+            def fail_install_and_first_restore(source, target):
+                nonlocal failed_install
+                source = Path(source)
+                target = Path(target)
+                if not failed_install and target == second and source.name.startswith(".second."):
+                    failed_install = True
+                    raise OSError("simulated install failure")
+                if failed_install and target == first and ".first.rollback." in source.name:
+                    raise OSError("simulated rollback restore failure")
+                return real_replace(source, target)
+            with mock.patch.object(installer.os, "replace", side_effect=fail_install_and_first_restore):
+                with self.assertRaisesRegex(RuntimeError, "prior bytes retained in rollback backup"):
+                    installer.commit_install(plans, False)
+            backups = list(Path(temp).glob(".first.rollback.*"))
+            self.assertEqual(len(backups), 1)
+            self.assertEqual(backups[0].read_text(), "old-first")
+            self.assertNotEqual(first.read_text(), "old-first")
 
     def test_installer_refuses_a_symlink_target(self):
         with tempfile.TemporaryDirectory() as temp:
