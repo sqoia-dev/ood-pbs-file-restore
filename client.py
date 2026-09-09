@@ -7,23 +7,29 @@ import pwd
 import subprocess
 import sys
 
+sys.path.insert(0, "/usr/local/lib/ood-pbs-file-restore")
+from site_config import load as load_site_config
 
 MAX_REQUEST = 65536
-SSH = [
-    "/usr/bin/ssh",
-    "-T",
-    "-o",
-    "BatchMode=yes",
-    "-o",
-    "IdentitiesOnly=yes",
-    "-o",
-    "StrictHostKeyChecking=yes",
-    "-o",
-    "UserKnownHostsFile=/etc/ood-pbs-restore/known_hosts",
-    "-i",
-    "/etc/ood-pbs-restore/broker_ed25519",
-    "root@storage.example.edu",
-]
+
+
+def ssh_command(config=None):
+    portal = (config or load_site_config())["portal"]
+    return [
+        "/usr/bin/ssh",
+        "-T",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "IdentitiesOnly=yes",
+        "-o",
+        "StrictHostKeyChecking=yes",
+        "-o",
+        "UserKnownHostsFile=" + portal["known_hosts"],
+        "-i",
+        portal["ssh_private_key"],
+        portal["broker_ssh_target"],
+    ]
 
 
 def fail(message):
@@ -55,7 +61,7 @@ def main():
     request["user"] = sudo_user
     encoded = (json.dumps(request, separators=(",", ":")) + "\n").encode("utf-8")
     completed = subprocess.run(
-        SSH,
+        ssh_command(),
         input=encoded,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

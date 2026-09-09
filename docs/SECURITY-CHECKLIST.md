@@ -21,7 +21,7 @@ security boundary, not an ordinary web application.
 - [ ] The token cannot modify, prune, delete, or administer backups.
 - [ ] PBS TLS uses a trusted certificate or an installed private CA; certificate
   verification has not been disabled.
-- [ ] `/etc/ood-pbs-file-restore.env` is root-owned, mode `0600`, and excluded from
+- [ ] The configured broker secret environment file is root-owned, mode `0600`, and excluded from
   configuration bundles and support captures.
 
 ## SSH broker boundary
@@ -36,6 +36,8 @@ security boundary, not an ordinary web application.
 ## Portal and sudo
 
 - [ ] `client.py` points to the intended broker FQDN and pinned key files.
+- [ ] `site.json` passed runtime validation; its deployment model remains
+  `shared-home-v1`, and users cannot modify it.
 - [ ] `/usr/local/sbin/pbs-restore-client` is root-owned and not group-writable.
 - [ ] `/etc/sudoers.d/ood-pbs-restore` passes `visudo -cf`.
 - [ ] Sudo grants only the exact client path; it does not grant Python, SSH,
@@ -47,7 +49,7 @@ security boundary, not an ordinary web application.
 - [ ] Snapshot listing and catalog browsing pass with a synthetic canary user.
 - [ ] A request containing another `user` value cannot change effective identity.
 - [ ] Absolute-path and `..` tokens are rejected.
-- [ ] A small file restore lands only below the canary's `.pbs-restores` tree.
+- [ ] A small file restore lands only below the configured restore tree.
 - [ ] Restored ownership, modes, and no-overwrite behavior were inspected.
 - [ ] Rejected and successful operations appear in broker logs without secrets.
 - [ ] Token rotation, key revocation, incident response, restore-capacity

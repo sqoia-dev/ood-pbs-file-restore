@@ -7,10 +7,14 @@ import os
 import pwd
 import subprocess
 
+from site_config import load as load_site_config
 
-CLIENT = ["/usr/bin/sudo", "-n", "/usr/local/sbin/pbs-restore-client"]
 ACCOUNT = pwd.getpwuid(os.getuid())
-EXPECTED_ROOT = os.path.join(ACCOUNT.pw_dir, ".pbs-restores") + os.sep
+CONFIG = load_site_config()
+CLIENT = ["/usr/bin/sudo", "-n", CONFIG["portal"]["client_path"]]
+EXPECTED_ROOT = os.path.join(
+    ACCOUNT.pw_dir, CONFIG["app"]["restore_directory_name"]
+) + os.sep
 
 if os.environ.get("PBS_RESTORE_ENABLE_LIVE_TEST") != "YES":
     raise SystemExit(

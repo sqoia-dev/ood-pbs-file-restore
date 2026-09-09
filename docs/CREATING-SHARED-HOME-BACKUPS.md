@@ -36,7 +36,7 @@ The backup writer and restore broker must use separate PBS tokens and separate e
 | Purpose | Suggested file | Permission |
 | --- | --- | --- |
 | Backup writer | `/etc/pbs-home-backup-writer.env` | Datastore backup/write only where required |
-| Restore broker | `/etc/ood-pbs-file-restore.env` | Read-only access to the required datastore |
+| Restore broker | configured `broker.secret_env_file` | Read-only access to the required datastore |
 
 Never reuse the writer token for user-facing restores.
 

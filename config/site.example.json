@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "deployment_model": "shared-home-v1",
+  "broker": {
+    "backup_type": "host",
+    "archive_name": "root.pxar.didx",
+    "catalog_name": "catalog.pcat1.didx",
+    "home_root": "/home",
+    "staging_root": "/home/.pbs-restore-staging",
+    "snapshot_max_age_days": 31,
+    "secret_env_file": "/etc/ood-pbs-file-restore/broker.env"
+  },
+  "portal": {
+    "broker_ssh_target": "root@storage.example.edu",
+    "ssh_private_key": "/etc/ood-pbs-file-restore/broker_ed25519",
+    "known_hosts": "/etc/ood-pbs-file-restore/known_hosts",
+    "client_path": "/usr/local/sbin/pbs-restore-client"
+  },
+  "app": {
+    "name": "PBS File Restore for Open OnDemand by Sqoia Labs",
+    "description": "Browse and restore user-owned files from supported Proxmox Backup Server shared-home snapshots.",
+    "support_url": "https://github.com/NessieCanCode/ood-pbs-file-restore/issues",
+    "restore_directory_name": ".pbs-restores"
+  }
+}

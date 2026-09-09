@@ -7,8 +7,8 @@ import pwd
 import subprocess
 import yaml
 
+from site_config import load as load_site_config
 
-CLIENT = ["/usr/bin/sudo", "-n", "/usr/local/sbin/pbs-restore-client"]
 MAX_REQUEST = 65536
 
 PAGE = r"""<!doctype html>
@@ -17,7 +17,7 @@ PAGE = r"""<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="generator" content="Open OnDemand">
-  <title>File Restore - Open OnDemand</title>
+  <title>__APP_NAME__</title>
   <link rel="icon" type="image/x-icon" href="/public/favicon.ico">
   <script src="__OOD_JS__"></script>
   <link rel="preload stylesheet" href="__OOD_CSS__" media="all" as="style" type="text/css">
@@ -90,8 +90,8 @@ PAGE = r"""<!doctype html>
   <div id="main_container" class="container-fluid content mt-4" role="main">
     <div class="text-end sticky-top bg-white p-2 mb-4 d-flex flex-wrap gap-2 justify-content-end z-index-999 restore-toolbar" role="region" aria-label="Backup controls">
       <div class="text-start me-auto align-self-center">
-        <strong>30-day backup retention</strong>
-        <div id="retentionRange" class="small text-muted">Home-directory backups are available for the last 30 days. Older backups are not retained.</div>
+        <strong>__RETENTION_DAYS__-day backup window</strong>
+        <div id="retentionRange" class="small text-muted">Completed home-directory backups are shown for up to __RETENTION_DAYS__ days.</div>
       </div>
       <label class="text-start">Backup date
         <input id="backupDate" class="form-control form-control-sm" type="date" disabled>
@@ -108,15 +108,15 @@ PAGE = r"""<!doctype html>
         <div class="card mt-4">
           <div class="card-body">
             <h2 class="h6 card-title">Safe restore location</h2>
-            <p class="card-text small mb-0">Restores never overwrite current files. Recovered content is placed under <strong>~/.pbs-restores</strong> by backup date.</p>
+            <p class="card-text small mb-0">Restores never overwrite current files. Recovered content is placed under <strong>~/__RESTORE_DIRECTORY__</strong> by backup date.</p>
           </div>
         </div>
       </div>
       <div class="col-md-9">
         <div class="d-flex flex-wrap align-items-center justify-content-between mb-2">
           <div>
-            <h1 class="h3 mb-1">File Restore</h1>
-            <p class="text-muted mb-0">Recover files and folders from your home-directory backups.</p>
+            <h1 class="h3 mb-1">__APP_NAME__</h1>
+            <p class="text-muted mb-0">__APP_DESCRIPTION__</p>
           </div>
         </div>
         <nav id="crumbs" class="breadcrumb breadcrumb-no-delimiter rounded crumbs mt-3" aria-label="Backup path"></nav>
@@ -138,7 +138,7 @@ PAGE = r"""<!doctype html>
     </div>
   </div>
   <footer>
-    <div class="footer-info">© 2026 Sqoia Labs LLC | Built on <a href="https://openondemand.org/" target="_blank" rel="noopener">Open OnDemand</a></div>
+    <div class="footer-info">© 2026 Sqoia Labs LLC | AGPL-3.0-or-later | <a href="__SUPPORT_URL__" target="_blank" rel="noopener">Support and source</a> | Built on <a href="https://openondemand.org/" target="_blank" rel="noopener">Open OnDemand</a></div>
   </footer>
 <script>
 const dateInput = document.getElementById("backupDate");
@@ -255,7 +255,7 @@ async function loadDirectory() {
   } catch(error) { status(error.message,"error"); files.innerHTML='<tr><td class="empty" colspan="5">Unable to load this directory.</td></tr>'; }
 }
 async function restoreEntry(entry) {
-  const message=`Restore “${entry.name}” from ${dateInput.value}? It will be placed under ~/.pbs-restores and will not overwrite current data.`;
+  const message=`Restore “${entry.name}” from ${dateInput.value}? It will be placed under ~/__RESTORE_DIRECTORY__ and will not overwrite current data.`;
   if(!window.confirm(message)) return;
   status(`Restoring ${entry.name}… Keep this page open; large directories can take time.`);
   document.querySelectorAll("button").forEach(button=>button.disabled=true);
@@ -277,7 +277,7 @@ async function initialize() {
     dateInput.min=dates[0]; dateInput.max=dates.at(-1); dateInput.value=dates.at(-1);
     const firstAvailable=new Date(`${dates[0]}T00:00:00`).toLocaleDateString();
     const lastAvailable=new Date(`${dates.at(-1)}T00:00:00`).toLocaleDateString();
-    retentionRange.textContent=`Home-directory backups are retained for 30 days. Completed backups are currently available from ${firstAvailable} through ${lastAvailable}.`;
+    retentionRange.textContent=`Completed home-directory backups in the configured __RETENTION_DAYS__-day window are currently available from ${firstAvailable} through ${lastAvailable}.`;
     dateInput.disabled=false; refresh.disabled=false;
     await loadDirectory();
   } catch(error) { status(error.message,"error"); files.innerHTML='<tr><td class="empty" colspan="5">No backups available.</td></tr>'; }
@@ -345,6 +345,8 @@ def interactive_apps_menu():
 
 
 def render_page(username):
+    config = load_site_config()
+    app_config = config["app"]
     manifests = glob.glob(
         "/var/www/ood/apps/sys/dashboard/public/assets/.sprockets-manifest-*.json"
     )
@@ -363,6 +365,11 @@ def render_page(username):
         .replace("__OOD_JS__", "/pun/sys/dashboard/assets/" + javascript)
         .replace("__INTERACTIVE_APPS_MENU__", interactive_apps_menu())
         .replace("__USERNAME__", escaped_user)
+        .replace("__APP_NAME__", html.escape(app_config["name"], quote=True))
+        .replace("__APP_DESCRIPTION__", html.escape(app_config["description"], quote=True))
+        .replace("__SUPPORT_URL__", html.escape(app_config["support_url"], quote=True))
+        .replace("__RESTORE_DIRECTORY__", html.escape(app_config["restore_directory_name"], quote=True))
+        .replace("__RETENTION_DAYS__", str(config["broker"]["snapshot_max_age_days"]))
     )
 
 
@@ -441,7 +448,7 @@ def application(environ, start_response):
         )
     try:
         completed = subprocess.run(
-            CLIENT,
+            ["/usr/bin/sudo", "-n", load_site_config()["portal"]["client_path"]],
             input=(json.dumps(request) + "\n").encode("utf-8"),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

@@ -1,109 +1,50 @@
-# Open OnDemand PBS File Restore
+# PBS File Restore for Open OnDemand by Sqoia Labs
 
-## Overview
+A security-bound Open OnDemand companion application for authenticated users to browse recent Proxmox Backup Server (PBS) shared-home snapshots and restore files or directories into a new, non-overwriting destination in their own home.
 
-PBS File Restore is an Open OnDemand companion application that lets an
-authenticated user browse recent Proxmox Backup Server snapshots and restore
-files or directories from their own archived home directory. Restores are
-written beneath a new, non-overwriting destination in the user's home.
+## What it provides
 
-The design keeps PBS credentials and root filesystem access outside the user's
-Passenger process. A constrained client binds every request to `SUDO_USER`, and
-a forced-command SSH broker performs identity, archive-path, and destination
-validation before communicating with PBS.
-
-## Architecture
+- Date-based snapshot selection and catalog browsing in Open OnDemand.
+- Effective-user confinement at the Passenger, sudo client, SSH, broker, archive, and filesystem boundaries.
+- Root-only PBS credentials on the broker; the portal and user Passenger process never receive them.
+- Non-overwriting restores beneath a configurable directory (default `~/.pbs-restores`).
+- Revalidation of returned PBS paths, descriptor-relative destination traversal, and audit logging.
+- One validated non-secret site configuration shared by portal, application, and broker roles.
+- Idempotent role installation with dry-run and `DESTDIR` staging support.
 
 ```text
-Browser
-  -> Open OnDemand Passenger app in the user's PUN
-  -> sudo-confined client
-  -> forced-command SSH connection
-  -> privileged broker on the storage host
-  -> Proxmox Backup Server API
-  -> /home/<user>/.pbs-restores/<date>/<job-id>/
+Browser -> user Passenger app -> constrained sudo client
+        -> pinned forced-command SSH -> privileged storage broker
+        -> PBS HTTPS API -> /home/<user>/.pbs-restores/<date>/<job-id>/
 ```
 
-The Passenger application never receives the PBS API token, broker SSH private
-key, authority to select another username, or a general-purpose root command.
+## Evidence boundary
 
-## Features
-
-- Date-based PBS snapshot selection and catalog browsing
-- Authenticated-user confinement enforced independently at three layers
-- File and directory restoration without overwriting existing data
-- Revalidation of PBS catalog paths and downloaded archive paths
-- `O_NOFOLLOW` destination traversal and ownership checks
-- Root-only staging followed by placement into the user's restore directory
-- Audit logging through syslog/journald
-- Browser interface styled with the active Open OnDemand dashboard assets
-
-## Requirements
-
-For a clean installation, start with the complete
-[deployment guide](docs/DEPLOYMENT.md). It includes the topology assumptions,
-PBS permissions, SSH forced command, file modes, portal installation,
-acceptance tests, troubleshooting, upgrades, and rollback.
-
-### Open OnDemand portal
-
-- Open OnDemand 4.x with Passenger application support
-- Python 3.9 or later
-- Passwordless sudo for only the installed broker client command
-- A dedicated SSH key restricted to the broker forced command
-
-### Broker/storage host
-
-- Python 3.9 or later recommended
-- NSS resolution for the same users and numeric IDs as Open OnDemand
-- Direct access to the managed home filesystem
-- TLS connectivity to Proxmox Backup Server
-- A dedicated PBS API token scoped as narrowly as the backup layout permits
-
-The reference implementation expects one shared-home `host` backup whose pxar
-archive contains a top-level directory per username. Other layouts require a
-mapping adapter with equivalent identity and path validation.
-
-### Live-tested versions
-
-The reference workflow was checked live on 2026-08-07 with:
+The reference workflow was checked live on **2026-08-07** with:
 
 | Role | Live-tested versions |
 | --- | --- |
 | Open OnDemand portal | Rocky Linux 9.8, Open OnDemand 4.2.3, Python 3.9.25, PyYAML 5.4.1, OpenSSH 9.9p1 |
 | Broker and backup source | Red Hat Enterprise Linux 8.10, Python 3.6.8, OpenSSH 8.0p1 |
-| Static backup client | `proxmox-backup-client` 4.2.3 on RHEL 8.9/8.10 and Rocky Linux 9.8 x86_64 |
+| Static backup client (optional producer only) | `proxmox-backup-client` 4.2.3 on RHEL 8.9/8.10 and Rocky Linux 9.8 x86_64 |
 | PBS server | Debian 13, PBS runtime 4.2.2 with server package 4.2.5-1 installed |
 
-Python 3.6.8 describes the current live broker, but it is end-of-life and is
-not recommended for a new deployment. Other comparable Rocky Linux and
-AlmaLinux systems remain compatibility candidates rather than claimed
-live-tested combinations. See the
-[backup producer guide](docs/CREATING-SHARED-HOME-BACKUPS.md) for the precise
-test boundary and checksum-pinned installation.
+Python 3.6.8 describes the live broker evidence but is end-of-life; new deployments should use Python 3.9 or later. Comparable platforms are candidates, not supported claims, until a site canary passes.
 
-## Repository layout
+Only the `shared-home-v1` model is implemented: one `host` backup group, a pxar archive containing one top-level directory per username, matching Unix identities, and a broker with direct access to the managed home filesystem. PBS namespaces, per-user backup groups, alternate mappings, and arbitrary home layouts are not implemented.
 
-| Path | Purpose |
-| --- | --- |
-| `app.py` | Passenger WSGI application and browser interface |
-| `passenger_wsgi.py` | Passenger entry point |
-| `manifest.yml` | Open OnDemand application metadata |
-| `client.py` | Sudo-confined portal-side broker client |
-| `broker.py` | Privileged storage-side PBS broker |
-| `sudoers` | Example constrained sudo policy |
-| `validate.py` | Live confinement and restore validation client |
-| `docs/DEPLOYMENT.md` | End-to-end clean installation, testing, upgrade, and rollback |
-| `docs/SECURITY-CHECKLIST.md` | Production security review checklist |
-| `docs/CREATING-SHARED-HOME-BACKUPS.md` | Optional static-client and backup-producer setup |
-| `examples/` | Sanitized deployment configuration examples |
-| `PORTABILITY.md` | Security and portability review |
+## Safe configuration
 
-## Configuration
+Copy and review the non-secret example:
 
-### Broker environment
+```bash
+cp config/site.example.json site.json
+python3 tools/validate_config.py site.json
+```
 
-Create `/etc/ood-pbs-file-restore.env` on the broker with mode `0600`:
+`config/site.schema.json` documents the format. Runtime validation rejects unknown settings, unsupported deployment models, non-HTTPS PBS transport, unsafe paths, SSH option injection, and invalid restore directory names.
+
+The PBS token secret remains separate in the broker-only file named by `broker.secret_env_file` (default `/etc/ood-pbs-file-restore/broker.env`, root-owned mode `0600`):
 
 ```bash
 PBS_API_ROOT='https://pbs.example.edu:8007/api2/json/admin/datastore/DATASTORE'
@@ -112,85 +53,60 @@ PBS_PASSWORD='REPLACE_WITH_TOKEN_SECRET'
 PBS_BACKUP_ID='storage-server'
 ```
 
-Never commit this file or expose it to portal hosts. Use a dedicated token and
-limit its ACL to the required datastore or namespace.
+Never commit that file, pass secrets to `install.py`, place the token on a portal, or reuse a backup-writer/admin token.
 
-The restore application does not invoke `proxmox-backup-client`; it consumes
-existing snapshots through the PBS HTTPS API. Sites that still need to create
-the expected shared-home snapshots can follow
-[Creating shared-home backups](docs/CREATING-SHARED-HOME-BACKUPS.md). That
-optional guide includes checksum-pinned installation of the official static
-client on Enterprise Linux systems.
+## Install and validate
 
-Review these centralized site values before deployment:
-
-| File | Setting |
-| --- | --- |
-| `broker.py` | Backup type, archive filenames, environment-file path, home root, staging root, retention window |
-| `client.py` | Broker hostname, SSH key path, and pinned known-hosts path |
-| `sudoers` | Installed client path and permitted invoking users |
-| `app.py` | Optional navigation and branding |
-
-## Installation outline
-
-1. Install `broker.py` root-owned and non-writable on the storage host.
-2. Configure a dedicated forced-command SSH key that permits no shell, PTY,
-   forwarding, agent forwarding, or user-supplied command.
-3. Install the pinned broker host key and private key on every portal.
-4. Install `client.py` root-owned on every portal.
-5. Install and validate the constrained sudo rule.
-6. Clone this repository into `/var/www/ood/apps/sys/pbs-file-restore`.
-7. Stage or restart the Passenger application using the procedure appropriate
-   for the installed Open OnDemand version.
-
-The exact forced-command and deployment configuration is security-sensitive.
-Follow [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), then review
-[docs/SECURITY-CHECKLIST.md](docs/SECURITY-CHECKLIST.md) before enabling users.
-
-## Security invariants
-
-- The effective username comes from the Unix process and `SUDO_USER`.
-- The canonical home must match `/home/<username>`.
-- User input cannot choose a PBS backup group or archive prefix.
-- Absolute paths, traversal components, NULs, and unsafe archive names fail closed.
-- Catalog responses are confined again after PBS returns them.
-- Restore destinations are traversed relative to validated directory descriptors.
-- Existing destination paths are never overwritten.
-- Successful restores and rejected operations are auditable.
-
-## Validation
-
-Run syntax validation before deployment:
+Read [the deployment guide](docs/DEPLOYMENT.md) and complete the [security checklist](docs/SECURITY-CHECKLIST.md). Preview both roles without root or host mutation:
 
 ```bash
-python3 -m py_compile app.py passenger_wsgi.py client.py broker.py validate.py
+python3 install.py --role broker --config site.json --dry-run
+python3 install.py --role portal --config site.json --dry-run
 ```
 
-Then use a non-privileged canary account to verify snapshot listing, directory
-browsing, absolute-path rejection, file restore, directory restore, ownership,
-mode, and destination confinement. Never test with production credentials in a
-development checkout.
+Stage a clean package tree for inspection or packaging tests:
 
-## Known limitations
+```bash
+python3 install.py --role broker --config site.json --destdir "$PWD/stage-broker"
+python3 install.py --role portal --config site.json --destdir "$PWD/stage-portal"
+```
 
-- Only the shared-home archive layout is implemented.
-- Restore requests are synchronous.
-- There are no built-in per-user byte quotas or rate limits.
+A real install requires root-owned protected source, independently provisioned credentials/SSH trust, `visudo` validation, canary acceptance tests, and local change control. The installer never reads or writes the PBS secret, SSH private key, or `known_hosts`.
+
+Local checks:
+
+```bash
+python3 -m py_compile app.py passenger_wsgi.py client.py broker.py site_config.py validate.py install.py tools/validate_config.py
+python3 tools/validate_config.py config/site.example.json
+python3 -m unittest discover -s tests -v
+python3 install.py --role portal --config config/site.example.json --dry-run
+python3 install.py --role broker --config config/site.example.json --dry-run
+```
+
+The live validator is intentionally separate and refuses to run unless explicitly enabled against a non-privileged synthetic canary. Do not run it with production credentials from a development checkout.
+
+## Operations
+
+- **Upgrade:** validate the new config and source, preserve the exact previous release/config, install broker/client/app from one reviewed commit, restart only the canary PUN, and rerun confinement and restore checks before serial rollout.
+- **Rollback:** reinstall all three runtime components from the exact preserved previous release and repeat acceptance testing. Do not mix versions.
+- **Uninstall/disable:** use `install.py --action uninstall` for each role, then separately remove the forced-key authorization, validate sudoers, and revoke the dedicated PBS token. Configuration, credentials, logs, and user restore trees are deliberately preserved for reviewed disposition.
+- **Secrets:** rotate the broker token and portal key through site-managed protected workflows; never include values in logs or support captures.
+
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for exact security gates and [docs/CREATING-SHARED-HOME-BACKUPS.md](docs/CREATING-SHARED-HOME-BACKUPS.md) for the optional, separately privileged backup producer.
+
+## Limitations
+
+- Shared-home archive layout only.
+- Synchronous restores; no built-in per-user byte quotas or rate limits.
 - Individual symbolic links must be restored through their parent directory.
-- Restored standalone files are intentionally reduced to mode `0600`.
-- The privileged broker requires an institution-specific security review.
+- Standalone restored files are reduced to mode `0600`.
+- Every deployment requires an institution-specific privileged-boundary and capacity review.
+- Integration, concurrent multi-user, and disposable-PBS tests are not included in this local productization; live canary validation remains required.
 
-## Support and contributing
+## Support, source, and license
 
-Use [GitHub Issues](https://github.com/NessieCanCode/ood-pbs-file-restore/issues)
-for bugs and deployment questions. Security-sensitive reports should not include
-tokens, backup contents, private keys, or user data.
+Recommended company repository path: `sqoia-dev/ood-pbs-file-restore`.
 
-## License
+Until that reviewed publication exists, the upstream source and issue tracker remain <https://github.com/NessieCanCode/ood-pbs-file-restore>. Do not treat the recommended path as published.
 
-Copyright © 2026 Sqoia Labs LLC.
-
-This project is licensed under the
-[GNU Affero General Public License v3.0 or later](LICENSE). Organizations that
-need different licensing terms may contact Sqoia Labs LLC regarding a separate
-commercial license.
+Copyright © 2026 Sqoia Labs LLC. Licensed under the [GNU Affero General Public License v3.0 or later](LICENSE), with the notices in [NOTICE](NOTICE). Network operators must meet the AGPL source-availability obligations for deployed modifications. The software is provided without warranty as described in the license.

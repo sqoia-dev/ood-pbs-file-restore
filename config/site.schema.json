@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sqoia.com/schemas/ood-pbs-file-restore-site-v1.json",
+  "title": "PBS File Restore site configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "deployment_model", "broker", "portal", "app"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "deployment_model": {"const": "shared-home-v1"},
+    "broker": {
+      "type": "object", "additionalProperties": false,
+      "required": ["backup_type", "archive_name", "catalog_name", "home_root", "staging_root", "snapshot_max_age_days", "secret_env_file"],
+      "properties": {
+        "backup_type": {"const": "host"},
+        "archive_name": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+        "catalog_name": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+        "home_root": {"type": "string", "pattern": "^/"},
+        "staging_root": {"type": "string", "pattern": "^/"},
+        "snapshot_max_age_days": {"type": "integer", "minimum": 1, "maximum": 366},
+        "secret_env_file": {"type": "string", "pattern": "^/"}
+      }
+    },
+    "portal": {
+      "type": "object", "additionalProperties": false,
+      "required": ["broker_ssh_target", "ssh_private_key", "known_hosts", "client_path"],
+      "properties": {
+        "broker_ssh_target": {"type": "string", "pattern": "^root@[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$"},
+        "ssh_private_key": {"type": "string", "pattern": "^/"},
+        "known_hosts": {"type": "string", "pattern": "^/"},
+        "client_path": {"type": "string", "pattern": "^/"}
+      }
+    },
+    "app": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "description", "support_url", "restore_directory_name"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1, "maxLength": 120},
+        "description": {"type": "string", "minLength": 1, "maxLength": 300},
+        "support_url": {"type": "string", "pattern": "^https?://"},
+        "restore_directory_name": {"type": "string", "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9._-]{1,128}$"}
+      }
+    }
+  }
+}

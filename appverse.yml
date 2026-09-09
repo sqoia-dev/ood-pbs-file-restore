@@ -1,4 +1,4 @@
-title: "PBS File Restore"
+title: "PBS File Restore for Open OnDemand by Sqoia Labs"
 description: "Browse and safely restore user-owned home-directory files from Proxmox Backup Server through Open OnDemand."
 software: "Proxmox Backup Server"
 app_type: "companion_app"

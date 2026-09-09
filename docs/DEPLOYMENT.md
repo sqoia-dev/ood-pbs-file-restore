@@ -24,31 +24,27 @@ The PBS layout must be one shared `host` backup group whose backup ID is configu
 
 PBS namespaces, per-user backup groups, alternate home roots, and alternate archive layouts are not implemented by this release. Do not deploy it unchanged for those layouts.
 
-## 2. Choose deployment values
+## 2. Prepare and validate non-secret site configuration
 
-Record local values before editing anything:
+Copy `config/site.example.json` to a protected change-controlled working file. Set the portal broker target, installed paths, supported shared-home archive names, home/staging roots, retention window, application text, and support URL there rather than editing Python source:
 
-| Placeholder | Meaning | Example only |
-| --- | --- | --- |
-| `ood.example.edu` | Open OnDemand portal | `ood.example.edu` |
-| `storage.example.edu` | SSH broker and home-storage host | `storage.example.edu` |
-| `pbs.example.edu` | PBS API host | `pbs.example.edu` |
-| `DATASTORE` | PBS datastore containing home snapshots | `home-backups` |
-| `storage-server` | PBS `host` backup ID | `home-nfs` |
-| `restore@pbs!openondemand` | Dedicated PBS API token ID | synthetic |
-| `canary` | Non-privileged test account with a small backup | synthetic |
+    cp config/site.example.json site.json
+    python3 tools/validate_config.py site.json
+    python3 install.py --role broker --config site.json --dry-run
+    python3 install.py --role portal --config site.json --dry-run
 
-Use FQDNs whose forward and reverse resolution are stable. If several portals are deployed, repeat every portal-side step on each one.
+`config/site.schema.json` documents the format. Runtime validation is stricter than syntax alone: unknown fields, an unsupported deployment model, SSH option injection, unsafe path components, and out-of-range values fail closed.
 
-Obtain a protected source checkout on each host where files will be installed:
+This release accepts only `shared-home-v1` with PBS backup type `host`. Changing a field does not add support for another backup layout. Archive names, the home root, restore directory, and broker target remain security-sensitive and require the confinement checks in section 8.
+
+Pin the source before installation. For the upstream release shown by the existing live evidence:
 
     git clone https://github.com/NessieCanCode/ood-pbs-file-restore.git \
       /root/ood-pbs-file-restore-src
     cd /root/ood-pbs-file-restore-src
     git checkout v1.0.2
 
-Run source-relative commands in this guide from that checkout. Verify the tag
-or commit according to local software-supply-chain policy before installing it.
+For a reviewed Sqoia Labs product commit, substitute its exact immutable commit. Verify the commit/tree and source according to local supply-chain policy; do not assume the recommended `sqoia-dev/ood-pbs-file-restore` path exists until it has been separately published.
 
 ## 3. Prepare a dedicated PBS token
 
@@ -69,72 +65,27 @@ Retain the token secret only long enough to install the broker environment file.
 
 ## 4. Install and configure the broker
 
-Perform this section as root on `storage.example.edu`.
+Perform this section as root on the broker/storage host after reviewing the dry run.
 
-### 4.1 Install the broker executable
+    python3 install.py --role broker --config site.json
 
-Copy the repository to a protected administrative checkout, then install the broker:
+The idempotent installer places the broker and shared validator in protected paths, installs the non-secret site JSON as `/etc/ood-pbs-file-restore/site.json`, and enforces mode `0700` on the configured staging directory. It never reads or writes credentials. A `DESTDIR` may be used to stage the exact file layout for packaging review without host mutation.
 
-    install -o root -g root -m 0755 broker.py /usr/local/sbin/pbs-restore-broker
+Create the broker-only secret file at the exact `broker.secret_env_file` path from `site.json`, root-owned mode `0600`:
 
-Confirm that neither ordinary users nor the SSH key owner can modify the installed file:
+    install -d -o root -g root -m 0755 /etc/ood-pbs-file-restore
+    install -o root -g root -m 0600 \
+      examples/ood-pbs-file-restore.env.example \
+      /etc/ood-pbs-file-restore/broker.env
+    editor /etc/ood-pbs-file-restore/broker.env
 
-    stat -c '%U:%G %a %n' /usr/local/sbin/pbs-restore-broker
+Set the four required `PBS_*` values. The broker requires an HTTPS API root with no credentials, query, fragment, or trailing slash. Do not prefix lines with `export`. Confirm file protection without printing contents:
 
-The expected result is `root:root 755`.
+    stat -c '%U:%G %a %n' /etc/ood-pbs-file-restore/broker.env
 
-### 4.2 Review the compiled layout constants
+The expected result is `root:root 600`. Use a dedicated read-only PBS token scoped to the intended datastore or narrower supported scope.
 
-Review the constants at the top of `broker.py` before installation:
-
-| Constant | Default | Change when |
-| --- | --- | --- |
-| `BACKUP_TYPE` | `host` | Only after implementing and reviewing another PBS group type |
-| `ARCHIVE_NAME` | `root.pxar.didx` | The shared-home pxar archive has another name |
-| `CATALOG_NAME` | `catalog.pcat1.didx` | PBS produces another catalog name |
-| `ENV_FILE` | `/etc/ood-pbs-file-restore.env` | Site policy requires another protected path |
-| `STAGING_ROOT` | `/home/.pbs-restore-staging` | Another root-only staging filesystem is required |
-
-Changing `ARCHIVE_NAME`, the `/home` identity rule, or archive prefix is security-sensitive. Re-run traversal and cross-user confinement tests after any such change.
-
-### 4.3 Install broker configuration
-
-Start from the example file:
-
-    install -o root -g root -m 0600 examples/ood-pbs-file-restore.env.example /etc/ood-pbs-file-restore.env
-    editor /etc/ood-pbs-file-restore.env
-
-Set all four values:
-
-    PBS_API_ROOT='https://pbs.example.edu:8007/api2/json/admin/datastore/DATASTORE'
-    PBS_AUTH_ID='restore@pbs!openondemand'
-    PBS_PASSWORD='REPLACE_WITH_TOKEN_SECRET'
-    PBS_BACKUP_ID='storage-server'
-
-`PBS_API_ROOT` ends at the datastore name and must not have a trailing slash. Do not prefix lines with `export`; the broker intentionally ignores exported shell syntax. Confirm protection without printing the file:
-
-    stat -c '%U:%G %a %n' /etc/ood-pbs-file-restore.env
-
-The expected result is `root:root 600`.
-
-### 4.4 Establish PBS TLS trust
-
-The broker uses Python's default certificate validation. A publicly trusted PBS certificate normally requires no extra work. For a private CA, install only the CA certificate into the operating system trust store and refresh that store using the distribution procedure.
-
-Verify TLS and DNS from the broker:
-
-    curl --fail --show-error --silent \
-      https://pbs.example.edu:8007/api2/json/version
-
-Do not add an insecure TLS option and do not disable Python certificate verification.
-
-### 4.5 Prepare staging and identity checks
-
-    install -d -o root -g root -m 0700 /home/.pbs-restore-staging
-    getent passwd canary
-    stat -c '%u:%g %U:%G %a %n' /home/canary
-
-The `getent` home must be `/home/canary`, its UID must be at least 1000, and `/home/canary` must be owned by that user.
+Install any private CA into the operating-system trust store and verify TLS/DNS normally. Never disable certificate validation. Prepare a canary whose canonical NSS home is exactly `<broker.home_root>/<username>`, with matching identity across portal and broker. The broker must directly see that filesystem.
 
 ## 5. Create the forced-command SSH boundary
 
@@ -187,84 +138,36 @@ From the portal, an interactive attempt must not produce a shell:
 
 The forced broker may return an invalid-request JSON response because no request was supplied. That is acceptable. Receiving a shell is a deployment failure.
 
-## 6. Install the portal client and sudo rule
+## 6. Install the portal client, application, and sudo rule
 
-Perform this as root on every portal.
+Perform this on every portal after independently provisioning the dedicated SSH private key and pinned `known_hosts` at the paths in `site.json`:
 
-### 6.1 Configure and install the client
+    python3 install.py --role portal --config site.json --dry-run
+    python3 install.py --role portal --config site.json
+    visudo -cf /etc/sudoers.d/ood-pbs-file-restore
 
-Edit the `SSH` array near the top of `client.py`. Replace only the synthetic broker target if your values differ. Confirm these paths remain aligned with the key files installed above:
+The installer derives the exact sudo command from the validated `portal.client_path`; it does not use wildcards or grant Python, SSH, shells, or editors. It installs the app under `/var/www/ood/apps/sys/pbs-file-restore` and never reads or writes the SSH key or host-key pin.
 
-    UserKnownHostsFile=/etc/ood-pbs-restore/known_hosts
-    /etc/ood-pbs-restore/broker_ed25519
-    root@storage.example.edu
+Confirm ownership/modes and prove the dedicated key receives only the forced broker command. Receiving a shell, PTY, forwarding, or an arbitrary command is a deployment failure. If portal access is broader than restore eligibility, replace the sudoers subject with a reviewed local group/user alias while preserving the exact command.
 
-Then install it:
-
-    install -o root -g root -m 0755 client.py /usr/local/sbin/pbs-restore-client
-    stat -c '%U:%G %a %n' /usr/local/sbin/pbs-restore-client
-
-The expected result is `root:root 755`.
-
-### 6.2 Install the exact sudo policy
-
-Review `sudoers`, then install and validate it:
-
-    install -o root -g root -m 0440 sudoers /etc/sudoers.d/ood-pbs-restore
-    visudo -cf /etc/sudoers.d/ood-pbs-restore
-
-The supplied rule allows local users to run only `/usr/local/sbin/pbs-restore-client` as root without arguments. The client independently derives the caller from `SUDO_USER` and `SUDO_UID`, validates NSS, and replaces any submitted `user` field.
-
-If portal access is broader than restore eligibility, replace the first `ALL` in the command rule with a local Unix group or sudoers user alias. Do not broaden the command with wildcards and do not permit direct sudo access to Python, SSH, or the broker key.
-
-### 6.3 Test the complete transport as a canary
-
-Run this while logged in as the non-privileged canary account:
+As the non-privileged canary:
 
     printf '%s\n' '{"action":"snapshots"}' | \
       sudo -n /usr/local/sbin/pbs-restore-client | python3 -m json.tool
 
-A successful response contains `"ok": true` and at least one completed snapshot. If the response is empty, inspect portal SSH errors and broker logs; do not print the environment file.
+Never print the broker environment while troubleshooting.
 
-## 7. Install the Open OnDemand application
+## 7. Activate the Open OnDemand application
 
-### 7.1 Install dependencies
-
-The portal requires Python 3.9 or later and PyYAML 5.4 or later. Prefer the operating-system PyYAML package when Passenger uses the system Python. Alternatively, provide a site-managed Python environment that Passenger is explicitly configured to use.
-
-Verify the interpreter:
+The portal requires Python 3.9 or later and PyYAML 5.4 or later. Prefer the system package or a site-managed environment explicitly selected by Passenger:
 
     python3 -c 'import sys, yaml; print(sys.version); print(yaml.__version__)'
 
-### 7.2 Clone the system application
-
-    cd /var/www/ood/apps/sys
-    git clone https://github.com/NessieCanCode/ood-pbs-file-restore.git pbs-file-restore
-    cd pbs-file-restore
-    git checkout v1.0.2
-    chown -R root:root .
-    find . -type d -exec chmod 0755 {} +
-    find . -type f -exec chmod 0644 {} +
-    chmod 0755 client.py broker.py validate.py
-
-The runtime app uses `app.py`, `passenger_wsgi.py`, and `manifest.yml` from this checkout. The copies of `client.py` and `broker.py` in the checkout are deployment sources; runtime uses the protected installed copies.
-
-### 7.3 Check dashboard asset compatibility
-
-The application reads the active dashboard's Sprockets manifest so its page uses the installed Open OnDemand CSS and JavaScript. Confirm at least one file matches:
+The application reads the active dashboard Sprockets manifest. Confirm the configured Open OnDemand release provides one:
 
     ls /var/www/ood/apps/sys/dashboard/public/assets/.sprockets-manifest-*.json
 
-If the dashboard lives elsewhere or no Sprockets manifest exists, adapt `render_page()` in `app.py` for that Open OnDemand release before enabling users.
-
-### 7.4 Activate Passenger
-
-Open OnDemand normally discovers the system app without a service restart. If Passenger has cached an earlier copy:
-
-    install -d -o root -g root -m 0755 tmp
-    touch tmp/restart.txt
-
-Then restart the canary user's PUN from the dashboard or with the site's supported Open OnDemand administrative procedure. A global portal restart should not normally be necessary.
+If the dashboard layout differs, treat that platform as unproven and review an adapter before enabling users. To refresh Passenger, create/touch `tmp/restart.txt` in the installed app and restart only the canary PUN through the site's supported procedure.
 
 ## 8. Acceptance testing
 
@@ -272,7 +175,9 @@ Then restart the canary user's PUN from the dashboard or with the site's support
 
 From the checkout:
 
-    python3 -m py_compile app.py passenger_wsgi.py client.py broker.py validate.py
+    python3 -m py_compile app.py passenger_wsgi.py client.py broker.py site_config.py validate.py install.py tools/validate_config.py
+    python3 tools/validate_config.py site.json
+    python3 -m unittest discover -s tests -v
     python3 -c 'import yaml; yaml.safe_load(open("manifest.yml"))'
     visudo -cf /etc/sudoers.d/ood-pbs-restore
 
@@ -283,7 +188,7 @@ Sign in as the canary and open `/pun/sys/pbs-file-restore`. Verify:
 1. The page loads without a Python or Passenger error.
 2. Available snapshot dates appear.
 3. Browsing never shows another user's top-level archive.
-4. A small file restores below `/home/canary/.pbs-restores/<date>/<job-id>/`.
+4. A small file restores below the configured home and restore directory.
 5. The original live file is not overwritten.
 6. A second restore creates a new job directory.
 
@@ -318,7 +223,7 @@ Common failures:
 | App reports restore service unavailable | Sudo rule, installed client, SSH key modes, pinned host key, forced command |
 | Broker reports incomplete environment | Four required `PBS_*` values, file syntax, no `export`, mode `0600` |
 | PBS request fails | DNS, TCP 8007, TLS trust, API URL, token ID/secret, datastore ACL |
-| No snapshots appear | Backup type/ID, 31-day window, and presence of both required archive files |
+| No snapshots appear | Backup type/ID, configured window, and presence of both required archive files |
 | Authenticated account rejected | Matching NSS, UID at least 1000, allowed username syntax, exact `/home/<username>` |
 | Directory restore fails | PBS returned ZIP structure, free staging space, symlink/traversal rejection |
 | Page cannot find dashboard assets | Open OnDemand version or nonstandard dashboard asset location |
@@ -327,29 +232,26 @@ Logs intentionally avoid token secrets and restored contents. Preserve that prop
 
 ## 10. Upgrades
 
-1. Review `CHANGELOG.md` and compare security-sensitive constants.
-2. Test the new tag with a canary on a staging portal when available.
-3. Install the new broker and client into their protected paths.
-4. Update the system-app checkout to the same tag.
-5. Touch `tmp/restart.txt` and restart the canary PUN.
-6. Repeat snapshot, browse, small-restore, confinement, and log checks.
-7. Deploy serially to remaining portals.
+1. Record exact current commit/tree, installed file checksums, and validated configuration; preserve protected copies outside installer targets.
+2. Review `CHANGELOG.md`, configuration schema changes, and every security-sensitive diff.
+3. Validate and dry-run both roles from one exact new commit.
+4. Test on a staging portal or one synthetic canary when available.
+5. Install broker, client, and app from that same commit; never mix versions.
+6. Validate sudoers, refresh only the canary PUN, and repeat snapshot, browse, small-restore, confinement, ownership, no-overwrite, and log checks.
+7. Deploy serially to remaining portals only after the canary passes.
 
-Keep the broker, client, and web app on the same release.
+## 11. Disable, uninstall, or roll back
 
-## 11. Disable or roll back
+To disable access, remove/disable the system app, remove the sudoers rule and run `visudo -c`, remove the portal key line from broker `authorized_keys`, and revoke the dedicated PBS token. Preserve logs and user restores according to site policy.
 
-To disable access without deleting user restores:
+The bounded uninstaller removes only managed runtime files:
 
-1. Remove or disable the dashboard/system app checkout.
-2. Remove the sudoers rule and confirm `visudo -c` still passes.
-3. Remove the portal public key line from the broker's authorized keys.
-4. Revoke the dedicated PBS API token.
-5. Preserve broker logs according to incident and audit policy.
+    python3 install.py --role portal --config site.json --action uninstall --dry-run
+    python3 install.py --role broker --config site.json --action uninstall --dry-run
 
-Do not delete users' `.pbs-restores` trees automatically. They contain user-owned recovered data.
+Review, then rerun without `--dry-run`. It deliberately preserves site configuration, credentials, SSH trust, logs, and restored data for separate reviewed disposition.
 
-For a version rollback, reinstall the broker and client from the previous signed or reviewed tag, check out the same tag in the system app, restart the canary PUN, and repeat acceptance testing.
+For rollback, reinstall all runtime files from the exact preserved previous commit and its compatible validated configuration. Revalidate sudoers, restart the canary PUN, and repeat acceptance testing. Do not automatically delete staging evidence or users' restore trees.
 
 ## 12. Information safe to include in support requests
 
@@ -367,6 +269,6 @@ Never publish:
 - Private/public SSH key material or full host keys
 - Internal hostnames, IP addresses, inventories, or certificates
 - Production usernames, UIDs, backup paths, catalog responses, or contents
-- `/etc/ood-pbs-file-restore.env`
+- The configured broker secret environment file
 
 Before production enablement, complete [SECURITY-CHECKLIST.md](SECURITY-CHECKLIST.md).

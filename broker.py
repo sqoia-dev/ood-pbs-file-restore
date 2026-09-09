@@ -22,15 +22,10 @@ import urllib.request
 import uuid
 import zipfile
 
+sys.path.insert(0, "/usr/local/lib/ood-pbs-file-restore")
+from site_config import load as load_site_config
 
-API_ROOT = "https://pbs.example.edu:8007/api2/json/admin/datastore/DATASTORE"
-BACKUP_TYPE = "host"
-BACKUP_ID = "storage-server"
-ARCHIVE_NAME = "root.pxar.didx"
-CATALOG_NAME = "catalog.pcat1.didx"
-REQUIRED_SNAPSHOT_FILES = frozenset((ARCHIVE_NAME, CATALOG_NAME))
-ENV_FILE = "/etc/ood-pbs-file-restore.env"
-STAGING_ROOT = "/home/.pbs-restore-staging"
+
 MAX_REQUEST = 65536
 USERNAME_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
@@ -38,6 +33,16 @@ DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 
 class BrokerError(Exception):
     pass
+
+
+_CONFIG = None
+
+
+def site_config():
+    global _CONFIG
+    if _CONFIG is None:
+        _CONFIG = load_site_config()
+    return _CONFIG
 
 
 def logger():
@@ -52,7 +57,7 @@ def logger():
 
 def load_environment():
     values = {}
-    with open(ENV_FILE, "r") as handle:
+    with open(site_config()["broker"]["secret_env_file"], "r") as handle:
         for raw_line in handle:
             line = raw_line.strip()
             if not line or line.startswith("#") or line.startswith("export "):
@@ -72,6 +77,17 @@ def load_environment():
     )
     if any(not values.get(key) for key in required):
         raise BrokerError("incomplete broker environment")
+    api_url = urllib.parse.urlparse(values["PBS_API_ROOT"])
+    if (
+        api_url.scheme != "https"
+        or not api_url.netloc
+        or api_url.username
+        or api_url.password
+        or api_url.query
+        or api_url.fragment
+        or values["PBS_API_ROOT"].endswith("/")
+    ):
+        raise BrokerError("invalid PBS API URL")
     return values
 
 
@@ -82,7 +98,7 @@ def identity(username):
         account = pwd.getpwnam(username)
     except KeyError:
         raise BrokerError("authenticated account does not exist")
-    expected_home = "/home/" + username
+    expected_home = os.path.join(site_config()["broker"]["home_root"], username)
     if os.path.realpath(account.pw_dir) != expected_home:
         raise BrokerError("account home is outside the managed home root")
     return account
@@ -112,13 +128,14 @@ def encode_token(relative):
 
 
 def archive_prefix(username):
-    return ("/%s/%s" % (ARCHIVE_NAME, username)).encode("utf-8")
+    archive_name = site_config()["broker"]["archive_name"]
+    return ("/%s/%s" % (archive_name, username)).encode("utf-8")
 
 
 def api_call(endpoint, params, environment):
     query = urllib.parse.urlencode(params)
     request = urllib.request.Request(
-        environment.get("PBS_API_ROOT", API_ROOT) + "/" + endpoint + "?" + query,
+        environment["PBS_API_ROOT"] + "/" + endpoint + "?" + query,
         headers={
             "Authorization": "PBSAPIToken=" + environment["PBS_AUTH_ID"] + ":" + environment["PBS_PASSWORD"],
             "Accept": "application/json",
@@ -141,7 +158,7 @@ def api_call(endpoint, params, environment):
 def api_download(endpoint, params, environment, destination):
     query = urllib.parse.urlencode(params)
     request = urllib.request.Request(
-        environment.get("PBS_API_ROOT", API_ROOT) + "/" + endpoint + "?" + query,
+        environment["PBS_API_ROOT"] + "/" + endpoint + "?" + query,
         headers={
             "Authorization": "PBSAPIToken=" + environment["PBS_AUTH_ID"] + ":" + environment["PBS_PASSWORD"],
             "Accept": "application/octet-stream",
@@ -160,14 +177,16 @@ def api_download(endpoint, params, environment, destination):
 
 
 def available_snapshots(environment):
+    broker_config = site_config()["broker"]
     entries = api_call(
         "snapshots",
-        {"backup-type": BACKUP_TYPE, "backup-id": environment.get("PBS_BACKUP_ID", BACKUP_ID)},
+        {"backup-type": broker_config["backup_type"], "backup-id": environment["PBS_BACKUP_ID"]},
         environment,
     )
     cutoff = int(
         (
-            datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=31)
+            datetime.datetime.now(datetime.timezone.utc)
+            - datetime.timedelta(days=broker_config["snapshot_max_age_days"])
         ).timestamp()
     )
     snapshots = []
@@ -183,7 +202,8 @@ def available_snapshots(environment):
             for item in files
             if isinstance(item, dict) and isinstance(item.get("filename"), str)
         }
-        if not REQUIRED_SNAPSHOT_FILES.issubset(filenames):
+        required_snapshot_files = frozenset((broker_config["archive_name"], broker_config["catalog_name"]))
+        if not required_snapshot_files.issubset(filenames):
             continue
         instant = datetime.datetime.fromtimestamp(
             stamp, tz=datetime.timezone.utc
@@ -219,8 +239,8 @@ def list_directory(username, epoch, token, environment):
     entries = api_call(
         "catalog",
         {
-            "backup-type": BACKUP_TYPE,
-            "backup-id": environment.get("PBS_BACKUP_ID", BACKUP_ID),
+            "backup-type": site_config()["broker"]["backup_type"],
+            "backup-id": environment["PBS_BACKUP_ID"],
             "backup-time": epoch,
             "filepath": base64.b64encode(full_path).decode("ascii"),
         },
@@ -281,7 +301,9 @@ def prepare_restore_job(account, date, job_id, relative):
             raise BrokerError("home directory ownership is invalid")
 
         restore_fd = open_or_create_directory(
-            home_fd, b".pbs-restores", 0o700, account.pw_uid, account.pw_gid
+            home_fd,
+            site_config()["app"]["restore_directory_name"].encode("utf-8"),
+            0o700, account.pw_uid, account.pw_gid
         )
         descriptors.append(restore_fd)
         date_fd = open_or_create_directory(
@@ -326,6 +348,8 @@ def safe_extract_zip(archive, destination_parent, account):
         entries = bundle.infolist()
         if not entries:
             raise BrokerError("PBS returned an empty directory archive")
+        validated = []
+        destinations = set()
         for entry in entries:
             name = entry.filename
             if "\x00" in name or name.startswith("/") or "\\" in name:
@@ -337,12 +361,23 @@ def safe_extract_zip(archive, destination_parent, account):
             if not os.path.abspath(destination).startswith(root + os.sep):
                 raise BrokerError("PBS archive escaped the restore root")
             mode = entry.external_attr >> 16
+            if destination in destinations:
+                raise BrokerError("PBS returned duplicate archive paths")
+            destinations.add(destination)
+            validated.append((entry, destination, mode))
+
+        # Create links only after all directories and regular files. This keeps
+        # a malicious archive from using an earlier symlink as a later parent.
+        validated.sort(key=lambda item: stat.S_ISLNK(item[2]))
+        for entry, destination, mode in validated:
             if entry.is_dir() or stat.S_ISDIR(mode):
                 os.makedirs(destination, mode=(mode & 0o777) or 0o700, exist_ok=True)
                 os.chown(destination, account.pw_uid, account.pw_gid)
                 continue
             os.makedirs(os.path.dirname(destination), mode=0o700, exist_ok=True)
             if stat.S_ISLNK(mode):
+                if os.path.lexists(destination):
+                    raise BrokerError("PBS returned conflicting archive paths")
                 target = bundle.read(entry).decode("utf-8", "surrogateescape")
                 os.symlink(target, destination)
                 os.lchown(destination, account.pw_uid, account.pw_gid)
@@ -384,10 +419,11 @@ def restore_path(username, epoch, token, environment):
         "%H%M%SZ-"
     ) + uuid.uuid4().hex[:8]
 
-    os.makedirs(STAGING_ROOT, mode=0o700, exist_ok=True)
-    os.chown(STAGING_ROOT, 0, 0)
-    os.chmod(STAGING_ROOT, 0o700)
-    staging = tempfile.mkdtemp(prefix=username + "-", dir=STAGING_ROOT)
+    staging_root = site_config()["broker"]["staging_root"]
+    os.makedirs(staging_root, mode=0o700, exist_ok=True)
+    os.chown(staging_root, 0, 0)
+    os.chmod(staging_root, 0o700)
+    staging = tempfile.mkdtemp(prefix=username + "-", dir=staging_root)
     descriptors = []
     try:
         download = os.path.join(staging, "download")
@@ -395,8 +431,8 @@ def restore_path(username, epoch, token, environment):
         api_download(
             "pxar-file-download",
             {
-                "backup-type": BACKUP_TYPE,
-                "backup-id": environment.get("PBS_BACKUP_ID", BACKUP_ID),
+                "backup-type": site_config()["broker"]["backup_type"],
+                "backup-id": environment["PBS_BACKUP_ID"],
                 "backup-time": epoch,
                 "filepath": base64.b64encode(full_path).decode("ascii"),
             },
@@ -437,7 +473,7 @@ def restore_path(username, epoch, token, environment):
         os.fchown(job_fd, account.pw_uid, account.pw_gid)
         os.fchmod(job_fd, 0o700)
         visible_destination = os.path.join(
-            account.pw_dir, ".pbs-restores", date, job_id, os.fsdecode(relative)
+            account.pw_dir, site_config()["app"]["restore_directory_name"], date, job_id, os.fsdecode(relative)
         )
         logger().info(
             "user=%s action=restore snapshot=%s destination=%s",
