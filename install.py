@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Idempotent role installer with an unprivileged dry-run and DESTDIR staging."""
+"""Fail-closed role installer with unprivileged dry-run and DESTDIR staging."""
 
 import argparse
 import os
 from pathlib import Path
-import shutil
+import stat
 import sys
+import tempfile
 
 from site_config import ConfigError, load
 
@@ -17,44 +18,92 @@ def destination(path, destdir):
 
 
 def same_bytes(source, target):
+    if target.is_symlink():
+        raise ConfigError("refusing symlink installer target %s" % target)
+    if target.exists() and not target.is_file():
+        raise ConfigError("refusing non-file installer target %s" % target)
     return target.is_file() and source.read_bytes() == target.read_bytes()
 
 
-def install_file(source, target, mode, dry_run):
-    action = "keep" if same_bytes(source, target) and target.stat().st_mode & 0o777 == mode else "install"
-    print("%s %s mode=%04o" % (action, target, mode))
-    if dry_run or action == "keep":
-        return
+def _temporary(target):
     target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_name(target.name + ".tmp")
-    shutil.copyfile(str(source), str(temporary))
-    os.chmod(str(temporary), mode)
-    os.replace(str(temporary), str(target))
+    descriptor, name = tempfile.mkstemp(prefix=".%s." % target.name, dir=str(target.parent))
+    return os.fdopen(descriptor, "wb"), Path(name)
 
 
-def install_text(text, target, mode, dry_run):
+def _prepared_bytes(data, target, mode):
+    handle, temporary = _temporary(target)
+    try:
+        with handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, mode)
+        return temporary
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def planned_file(source, target, mode):
+    action = "keep" if same_bytes(source, target) and target.stat().st_mode & 0o777 == mode else "install"
+    return action, source.read_bytes() if action == "install" else None, target, mode
+
+
+def planned_text(text, target, mode):
     current = target.read_text() if target.is_file() else None
     action = "keep" if current == text and target.stat().st_mode & 0o777 == mode else "install"
-    print("%s %s mode=%04o" % (action, target, mode))
-    if dry_run or action == "keep":
+    return action, text.encode("utf-8") if action == "install" else None, target, mode
+
+
+def commit_install(plans, dry_run):
+    """Prepare every file before replacing any; restore all replacements on error."""
+    for action, _, target, mode in plans:
+        print("%s %s mode=%04o" % (action, target, mode))
+    if dry_run:
         return
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_name(target.name + ".tmp")
-    temporary.write_text(text)
-    os.chmod(str(temporary), mode)
-    os.replace(str(temporary), str(target))
+    prepared = []
+    backups = []
+    try:
+        for action, data, target, mode in plans:
+            if action == "install":
+                prepared.append((target, _prepared_bytes(data, target, mode)))
+        for target, temporary in prepared:
+            backup = None
+            if target.exists() or target.is_symlink():
+                descriptor, backup_name = tempfile.mkstemp(prefix=".%s.rollback." % target.name, dir=str(target.parent))
+                os.close(descriptor)
+                backup = Path(backup_name)
+                os.replace(target, backup)
+            backups.append((target, backup))
+            os.replace(temporary, target)
+    except Exception:
+        for target, backup in reversed(backups):
+            try:
+                if target.exists() or target.is_symlink():
+                    target.unlink()
+                if backup is not None:
+                    os.replace(backup, target)
+            except OSError:
+                pass
+        raise
+    finally:
+        for _, temporary in prepared:
+            temporary.unlink(missing_ok=True)
+        for _, backup in backups:
+            if backup is not None:
+                backup.unlink(missing_ok=True)
 
 
-def remove_path(target, dry_run):
+def remove_managed_file(target, dry_run):
     if not target.exists() and not target.is_symlink():
         print("absent %s" % target)
         return
+    details = os.lstat(target)
+    if not (stat.S_ISREG(details.st_mode) or stat.S_ISLNK(details.st_mode)):
+        raise ConfigError("refusing to remove non-file managed target %s" % target)
     print("remove %s" % target)
-    if dry_run:
-        return
-    if target.is_dir() and not target.is_symlink():
-        shutil.rmtree(str(target))
-    else:
+    if not dry_run:
         target.unlink()
 
 
@@ -76,15 +125,16 @@ def main():
 
     if args.role == "broker":
         executable_target = destination("/usr/local/sbin/pbs-restore-broker", args.destdir)
-        managed = (executable_target, library_target)
         if args.action == "uninstall":
-            for target in managed:
-                remove_path(target, args.dry_run)
+            for target in (executable_target, library_target):
+                remove_managed_file(target, args.dry_run)
             print("preserve %s and all credentials, logs, and restored data" % config_target)
             return
-        install_file(SOURCE / "broker.py", executable_target, 0o755, args.dry_run)
-        install_file(SOURCE / "site_config.py", library_target, 0o644, args.dry_run)
-        install_file(config_source, config_target, 0o644, args.dry_run)
+        commit_install([
+            planned_file(SOURCE / "broker.py", executable_target, 0o755),
+            planned_file(SOURCE / "site_config.py", library_target, 0o644),
+            planned_file(config_source, config_target, 0o644),
+        ], args.dry_run)
         staging = destination(config["broker"]["staging_root"], args.destdir)
         print("ensure %s mode=0700 owner=root:root" % staging)
         if not args.dry_run:
@@ -98,30 +148,17 @@ def main():
     client_target = destination(config["portal"]["client_path"], args.destdir)
     sudoers_target = destination("/etc/sudoers.d/ood-pbs-file-restore", args.destdir)
     app_target = destination("/var/www/ood/apps/sys/pbs-file-restore", args.destdir)
+    app_files = ("app.py", "passenger_wsgi.py", "manifest.yml", "site_config.py", "requirements.txt", "LICENSE", "NOTICE")
     if args.action == "uninstall":
-        for target in (client_target, sudoers_target, library_target, app_target):
-            remove_path(target, args.dry_run)
-        print("preserve %s, SSH keys, known_hosts, and restored data" % config_target)
+        for target in (client_target, sudoers_target, library_target) + tuple(app_target / name for name in app_files):
+            remove_managed_file(target, args.dry_run)
+        print("preserve %s, SSH keys, known_hosts, restored data, and unmanaged app files" % config_target)
         return
 
-    install_file(SOURCE / "client.py", client_target, 0o755, args.dry_run)
-    install_file(SOURCE / "site_config.py", library_target, 0o644, args.dry_run)
-    install_file(config_source, config_target, 0o644, args.dry_run)
-    sudoers = (
-        "Defaults!%s !requiretty\n" % config["portal"]["client_path"]
-        + "ALL ALL=(root) NOPASSWD: %s\n" % config["portal"]["client_path"]
-    )
-    install_text(sudoers, sudoers_target, 0o440, args.dry_run)
-    for relative, mode in (
-        ("app.py", 0o644),
-        ("passenger_wsgi.py", 0o644),
-        ("manifest.yml", 0o644),
-        ("site_config.py", 0o644),
-        ("requirements.txt", 0o644),
-        ("LICENSE", 0o644),
-        ("NOTICE", 0o644),
-    ):
-        install_file(SOURCE / relative, app_target / relative, mode, args.dry_run)
+    sudoers = "Defaults!%s !requiretty\nALL ALL=(root) NOPASSWD: %s\n" % (config["portal"]["client_path"], config["portal"]["client_path"])
+    plans = [planned_file(SOURCE / "client.py", client_target, 0o755), planned_file(SOURCE / "site_config.py", library_target, 0o644), planned_file(config_source, config_target, 0o644), planned_text(sudoers, sudoers_target, 0o440)]
+    plans.extend(planned_file(SOURCE / name, app_target / name, 0o644) for name in app_files)
+    commit_install(plans, args.dry_run)
     print("validate %s with visudo -cf before enabling users" % sudoers_target)
     print("preserve SSH private keys and known_hosts; installer never reads or writes them")
 

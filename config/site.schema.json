@@ -15,20 +15,20 @@
         "backup_type": {"const": "host"},
         "archive_name": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
         "catalog_name": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
-        "home_root": {"type": "string", "pattern": "^/"},
-        "staging_root": {"type": "string", "pattern": "^/"},
+        "home_root": {"type": "string", "minLength": 2, "maxLength": 512, "pattern": "^/(?!.*(?:/\\.{1,2}(?:/|$)|//)).*[^/]$"},
+        "staging_root": {"type": "string", "minLength": 2, "maxLength": 512, "pattern": "^/(?!.*(?:/\\.{1,2}(?:/|$)|//)).*[^/]$"},
         "snapshot_max_age_days": {"type": "integer", "minimum": 1, "maximum": 366},
-        "secret_env_file": {"type": "string", "pattern": "^/"}
+        "secret_env_file": {"type": "string", "minLength": 2, "maxLength": 512, "pattern": "^/(?!.*(?:/\\.{1,2}(?:/|$)|//)).*[^/]$"}
       }
     },
     "portal": {
       "type": "object", "additionalProperties": false,
       "required": ["broker_ssh_target", "ssh_private_key", "known_hosts", "client_path"],
       "properties": {
-        "broker_ssh_target": {"type": "string", "pattern": "^root@[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$"},
-        "ssh_private_key": {"type": "string", "pattern": "^/"},
-        "known_hosts": {"type": "string", "pattern": "^/"},
-        "client_path": {"type": "string", "pattern": "^/"}
+        "broker_ssh_target": {"type": "string", "maxLength": 255, "pattern": "^root@[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$"},
+        "ssh_private_key": {"type": "string", "minLength": 2, "maxLength": 512, "pattern": "^/(?!.*(?:/\\.{1,2}(?:/|$)|//)).*[^/]$"},
+        "known_hosts": {"type": "string", "minLength": 2, "maxLength": 512, "pattern": "^/(?!.*(?:/\\.{1,2}(?:/|$)|//)).*[^/]$"},
+        "client_path": {"type": "string", "minLength": 2, "maxLength": 512, "pattern": "^/(?!.*(?:/\\.{1,2}(?:/|$)|//)).*[^/]$"}
       }
     },
     "app": {
@@ -37,7 +37,7 @@
       "properties": {
         "name": {"type": "string", "minLength": 1, "maxLength": 120},
         "description": {"type": "string", "minLength": 1, "maxLength": 300},
-        "support_url": {"type": "string", "pattern": "^https?://"},
+        "support_url": {"type": "string", "maxLength": 500, "pattern": "^https://[^/@?#]+(?:/[^?#]*)?$"},
         "restore_directory_name": {"type": "string", "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9._-]{1,128}$"}
       }
     }

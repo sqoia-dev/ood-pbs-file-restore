@@ -39,7 +39,7 @@ def _string(value, label, maximum=512):
 
 def _absolute_path(value, label):
     value = _string(value, label)
-    if not value.startswith("/") or os.path.normpath(value) != value:
+    if not value.startswith("/") or value == "/" or os.path.normpath(value) != value:
         raise ConfigError("%s must be a normalized absolute path" % label)
     return value
 
@@ -62,8 +62,6 @@ def validate(config):
             raise ConfigError("broker.%s contains unsafe characters" % key)
     for key in ("home_root", "staging_root", "secret_env_file"):
         _absolute_path(broker[key], "broker." + key)
-    if broker["home_root"] == "/" or broker["staging_root"] == "/":
-        raise ConfigError("home and staging roots cannot be /")
     days = broker["snapshot_max_age_days"]
     if isinstance(days, bool) or not isinstance(days, int) or not 1 <= days <= 366:
         raise ConfigError("broker.snapshot_max_age_days must be an integer from 1 through 366")
@@ -82,8 +80,8 @@ def validate(config):
     _string(app["description"], "app.description", 300)
     support = _string(app["support_url"], "app.support_url", 500)
     parsed = urlparse(support)
-    if parsed.scheme not in ("https", "http") or not parsed.netloc or parsed.username or parsed.password:
-        raise ConfigError("app.support_url must be an HTTP(S) URL without credentials")
+    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ConfigError("app.support_url must be an HTTPS URL without credentials, query, or fragment")
     restore_name = _string(app["restore_directory_name"], "app.restore_directory_name", 128)
     if restore_name in (".", "..") or "/" in restore_name or not _PATH_COMPONENT.match(restore_name):
         raise ConfigError("app.restore_directory_name must be one safe path component")

@@ -57,7 +57,16 @@ def logger():
 
 def load_environment():
     values = {}
-    with open(site_config()["broker"]["secret_env_file"], "r") as handle:
+    path = site_config()["broker"]["secret_env_file"]
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError as error:
+        raise BrokerError("unable to open broker environment") from error
+    details = os.fstat(descriptor)
+    if not stat.S_ISREG(details.st_mode) or details.st_uid != 0 or details.st_gid != 0 or details.st_mode & 0o077:
+        os.close(descriptor)
+        raise BrokerError("broker environment must be root-owned mode 0600")
+    with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
         for raw_line in handle:
             line = raw_line.strip()
             if not line or line.startswith("#") or line.startswith("export "):
@@ -379,6 +388,11 @@ def safe_extract_zip(archive, destination_parent, account):
                 if os.path.lexists(destination):
                     raise BrokerError("PBS returned conflicting archive paths")
                 target = bundle.read(entry).decode("utf-8", "surrogateescape")
+                if not target or target.startswith("/") or "\x00" in target:
+                    raise BrokerError("PBS archive symlink target is unsafe")
+                resolved = os.path.normpath(os.path.join(os.path.dirname(entry.filename), target))
+                if resolved == ".." or resolved.startswith("../"):
+                    raise BrokerError("PBS archive symlink target escapes the restore root")
                 os.symlink(target, destination)
                 os.lchown(destination, account.pw_uid, account.pw_gid)
                 continue
