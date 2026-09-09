@@ -61,7 +61,7 @@ class ConfigurationTests(unittest.TestCase):
 
     def test_schema_and_runtime_reject_the_same_security_variants(self):
         schema = json.loads((ROOT / "config/site.schema.json").read_text())
-        variants = (
+        variants = [
             ("broker", "archive_name", "archive\nname"),
             ("broker", "home_root", "/"),
             ("broker", "staging_root", "/var//tmp"),
@@ -76,7 +76,18 @@ class ConfigurationTests(unittest.TestCase):
             ("app", "support_url", "https://support.example.test/help?unsafe=1"),
             ("app", "name", "bad\x00name"),
             ("app", "description", "bad\nname"),
+        ]
+        string_fields = (
+            ("broker", "archive_name"), ("broker", "catalog_name"),
+            ("broker", "home_root"), ("broker", "staging_root"), ("broker", "secret_env_file"),
+            ("portal", "broker_ssh_target"), ("portal", "ssh_private_key"),
+            ("portal", "known_hosts"), ("portal", "client_path"),
+            ("app", "name"), ("app", "description"), ("app", "support_url"),
+            ("app", "restore_directory_name"),
         )
+        for section, key in string_fields:
+            baseline = self.config[section][key]
+            variants.extend(((section, key, baseline + "\x00"), (section, key, baseline + "\x7f")))
         for section, key, value in variants:
             with self.subTest(section=section, key=key, value=value):
                 changed = copy.deepcopy(self.config)

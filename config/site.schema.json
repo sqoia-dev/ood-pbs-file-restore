@@ -15,10 +15,10 @@
         "backup_type": {"const": "host"},
         "archive_name": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", "not": {"pattern": "[\\u0000-\\u001F\\u007F]"}},
         "catalog_name": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", "not": {"pattern": "[\\u0000-\\u001F\\u007F]"}},
-        "home_root": {"type": "string", "minLength": 2, "maxLength": 512, "pattern": "^/(?!.*(?:/\\.{1,2}(?:/|$)|//)).*[^/]$"},
-        "staging_root": {"type": "string", "minLength": 2, "maxLength": 512, "pattern": "^/(?!.*(?:/\\.{1,2}(?:/|$)|//)).*[^/]$"},
+        "home_root": {"type": "string", "minLength": 2, "maxLength": 512, "pattern": "^/(?!.*(?:/\\.{1,2}(?:/|$)|//)).*[^/]$", "not": {"pattern": "[\\u0000-\\u001F\\u007F]"}},
+        "staging_root": {"type": "string", "minLength": 2, "maxLength": 512, "pattern": "^/(?!.*(?:/\\.{1,2}(?:/|$)|//)).*[^/]$", "not": {"pattern": "[\\u0000-\\u001F\\u007F]"}},
         "snapshot_max_age_days": {"type": "integer", "minimum": 1, "maximum": 366},
-        "secret_env_file": {"type": "string", "minLength": 2, "maxLength": 512, "pattern": "^/(?!.*(?:/\\.{1,2}(?:/|$)|//)).*[^/]$"}
+        "secret_env_file": {"type": "string", "minLength": 2, "maxLength": 512, "pattern": "^/(?!.*(?:/\\.{1,2}(?:/|$)|//)).*[^/]$", "not": {"pattern": "[\\u0000-\\u001F\\u007F]"}}
       }
     },
     "portal": {
@@ -26,9 +26,9 @@
       "required": ["broker_ssh_target", "ssh_private_key", "known_hosts", "client_path"],
       "properties": {
         "broker_ssh_target": {"type": "string", "maxLength": 255, "pattern": "^root@(?!.*\\.\\.)[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$", "not": {"pattern": "[\\u0000-\\u001F\\u007F]"}},
-        "ssh_private_key": {"type": "string", "minLength": 2, "maxLength": 512, "pattern": "^/(?!.*(?:/\\.{1,2}(?:/|$)|//)).*[^/]$"},
-        "known_hosts": {"type": "string", "minLength": 2, "maxLength": 512, "pattern": "^/(?!.*(?:/\\.{1,2}(?:/|$)|//)).*[^/]$"},
-        "client_path": {"type": "string", "minLength": 2, "maxLength": 512, "pattern": "^/(?!.*(?:/\\.{1,2}(?:/|$)|//)).*[^/]$"}
+        "ssh_private_key": {"type": "string", "minLength": 2, "maxLength": 512, "pattern": "^/(?!.*(?:/\\.{1,2}(?:/|$)|//)).*[^/]$", "not": {"pattern": "[\\u0000-\\u001F\\u007F]"}},
+        "known_hosts": {"type": "string", "minLength": 2, "maxLength": 512, "pattern": "^/(?!.*(?:/\\.{1,2}(?:/|$)|//)).*[^/]$", "not": {"pattern": "[\\u0000-\\u001F\\u007F]"}},
+        "client_path": {"type": "string", "minLength": 2, "maxLength": 512, "pattern": "^/(?!.*(?:/\\.{1,2}(?:/|$)|//)).*[^/]$", "not": {"pattern": "[\\u0000-\\u001F\\u007F]"}}
       }
     },
     "app": {
@@ -37,7 +37,7 @@
       "properties": {
         "name": {"type": "string", "minLength": 1, "maxLength": 120, "pattern": "^[^\\u0000-\\u001F\\u007F]+$"},
         "description": {"type": "string", "minLength": 1, "maxLength": 300, "pattern": "^[^\\u0000-\\u001F\\u007F]+$"},
-        "support_url": {"type": "string", "maxLength": 500, "pattern": "^https://[^/@?#]+(?:/[^?#]*)?$"},
+        "support_url": {"type": "string", "maxLength": 500, "pattern": "^https://[^/@?#]+(?:/[^?#]*)?$", "not": {"pattern": "[\\u0000-\\u001F\\u007F]"}},
         "restore_directory_name": {"type": "string", "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9._-]{1,128}$"}
       }
     }
