@@ -87,7 +87,12 @@ class ConfigurationTests(unittest.TestCase):
         )
         for section, key in string_fields:
             baseline = self.config[section][key]
-            variants.extend(((section, key, baseline + "\x00"), (section, key, baseline + "\x7f")))
+            variants.extend(
+                (section, key, baseline + chr(codepoint))
+                for codepoint in (*range(32), 127)
+            )
+        for key in ("name", "description", "restore_directory_name"):
+            variants.append(("app", key, self.config["app"][key] + "\n"))
         for section, key, value in variants:
             with self.subTest(section=section, key=key, value=value):
                 changed = copy.deepcopy(self.config)
@@ -103,6 +108,16 @@ class ConfigurationTests(unittest.TestCase):
                 except jsonschema.ValidationError:
                     schema_valid = False
                 self.assertEqual(schema_valid, runtime_valid)
+
+    def test_public_identity_and_source_claims_are_current(self):
+        published_url = "https://github.com/sqoia-dev/ood-pbs-file-restore"
+        checked_files = ("README.md", "NOTICE", "PORTABILITY.md", "appverse.yml", "app.py")
+        combined = "\n".join((ROOT / name).read_text() for name in checked_files)
+        self.assertNotIn("Sqoia Labs LLC", combined)
+        readme = (ROOT / "README.md").read_text()
+        self.assertIn(published_url, readme)
+        self.assertNotIn("Until that reviewed publication exists", readme)
+        self.assertNotIn("Do not treat the recommended path as published", readme)
 
 
 class SecurityBoundaryTests(unittest.TestCase):

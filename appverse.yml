@@ -6,7 +6,7 @@ implementation_tags:
   - "passenger"
   - "api"
 maintainer:
-  name: "Sqoia Labs LLC"
+  name: "Sqoia Labs"
   support_url: "https://github.com/NessieCanCode/ood-pbs-file-restore/issues"
 website: "https://www.proxmox.com/en/products/proxmox-backup-server/overview"
 docs: "https://github.com/NessieCanCode/ood-pbs-file-restore#readme"
