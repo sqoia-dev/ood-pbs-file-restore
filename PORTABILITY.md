@@ -185,7 +185,7 @@ Provide optional variables for:
 
 ## Licensing and ownership
 
-The public project is copyright Sqoia Labs LLC and is licensed under
+The public project is copyright Sqoia Labs and is licensed under
 AGPL-3.0-or-later. Organizations that need different terms may contact Sqoia
 Labs LLC regarding a separate commercial license.
 

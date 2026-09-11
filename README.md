@@ -105,8 +105,6 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for exact security gates and [docs/
 
 ## Support, source, and license
 
-Recommended company repository path: `sqoia-dev/ood-pbs-file-restore`.
+Official source and issue tracker: <https://github.com/sqoia-dev/ood-pbs-file-restore>.
 
-Until that reviewed publication exists, the upstream source and issue tracker remain <https://github.com/NessieCanCode/ood-pbs-file-restore>. Do not treat the recommended path as published.
-
-Copyright © 2026 Sqoia Labs LLC. Licensed under the [GNU Affero General Public License v3.0 or later](LICENSE), with the notices in [NOTICE](NOTICE). Network operators must meet the AGPL source-availability obligations for deployed modifications. The software is provided without warranty as described in the license.
+Copyright © 2026 Sqoia Labs. Licensed under the [GNU Affero General Public License v3.0 or later](LICENSE), with the notices in [NOTICE](NOTICE). Network operators must meet the AGPL source-availability obligations for deployed modifications. The software is provided without warranty as described in the license.

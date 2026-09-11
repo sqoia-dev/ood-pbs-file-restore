@@ -138,7 +138,7 @@ PAGE = r"""<!doctype html>
     </div>
   </div>
   <footer>
-    <div class="footer-info">© 2026 Sqoia Labs LLC | AGPL-3.0-or-later | <a href="__SUPPORT_URL__" target="_blank" rel="noopener">Support and source</a> | Built on <a href="https://openondemand.org/" target="_blank" rel="noopener">Open OnDemand</a></div>
+    <div class="footer-info">© 2026 Sqoia Labs | AGPL-3.0-or-later | <a href="__SUPPORT_URL__" target="_blank" rel="noopener">Support and source</a> | Built on <a href="https://openondemand.org/" target="_blank" rel="noopener">Open OnDemand</a></div>
   </footer>
 <script>
 const dateInput = document.getElementById("backupDate");
