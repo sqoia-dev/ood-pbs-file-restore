@@ -58,10 +58,10 @@ def validate(config):
         raise ConfigError("only the live-tested shared-home-v1 deployment model is implemented")
 
     broker = _object(config["broker"], "broker")
-    _exact_keys(broker, ("backup_type", "archive_name", "catalog_name", "home_root", "staging_root", "snapshot_max_age_days", "secret_env_file"), "broker")
+    _exact_keys(broker, ("backup_type", "legacy_archive_name", "legacy_catalog_name", "split_archive_name", "split_payload_name", "home_root", "staging_root", "snapshot_max_age_days", "secret_env_file"), "broker")
     if broker["backup_type"] != "host":
         raise ConfigError("broker.backup_type must remain host for shared-home-v1")
-    for key in ("archive_name", "catalog_name"):
+    for key in ("legacy_archive_name", "legacy_catalog_name", "split_archive_name", "split_payload_name"):
         value = _string(broker[key], "broker." + key, 128)
         if not _SIMPLE_NAME.match(value):
             raise ConfigError("broker.%s contains unsafe characters" % key)

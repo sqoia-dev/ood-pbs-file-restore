@@ -17,12 +17,16 @@ The current implementation supports this topology:
 
 The broker and portals must resolve the same Unix identities. For each participating account, the canonical NSS home must be exactly `/home/<username>`. The broker must see the same home filesystem where restored content belongs.
 
-The PBS layout must be one shared `host` backup group whose backup ID is configured by `PBS_BACKUP_ID`. Every completed snapshot must contain:
+The PBS layout must be one shared `host` backup group whose backup ID is
+configured by `PBS_BACKUP_ID`. Every completed snapshot must contain one of:
 
-- `root.pxar.didx`, with user homes stored as `/<archive>/<username>/...`
-- `catalog.pcat1.didx`
+- legacy `root.pxar.didx` plus `catalog.pcat1.didx`; or
+- split `root.mpxar.didx` plus `root.ppxar.didx`.
 
-PBS namespaces, per-user backup groups, alternate home roots, and alternate archive layouts are not implemented by this release. Do not deploy it unchanged for those layouts.
+Usernames must be the first directory below the archived `/home` source. The
+broker detects each snapshot independently, allowing both formats during a
+retention transition. PBS namespaces, per-user backup groups, alternate home
+roots, and alternate archive base names are not implemented by this release.
 
 ## 2. Prepare and validate non-secret site configuration
 
@@ -37,14 +41,14 @@ Copy `config/site.example.json` to a protected change-controlled working file. S
 
 This release accepts only `shared-home-v1` with PBS backup type `host`. Changing a field does not add support for another backup layout. Archive names, the home root, restore directory, and broker target remain security-sensitive and require the confinement checks in section 8.
 
-Pin the source before installation. For the upstream release shown by the existing live evidence:
+Pin the reviewed Sqoia source before installation:
 
-    git clone https://github.com/NessieCanCode/ood-pbs-file-restore.git \
+    git clone https://github.com/sqoia-dev/ood-pbs-file-restore.git \
       /root/ood-pbs-file-restore-src
     cd /root/ood-pbs-file-restore-src
-    git checkout v1.0.2
+    git checkout REPLACE_WITH_REVIEWED_IMMUTABLE_COMMIT
 
-For a reviewed Sqoia Labs product commit, substitute its exact immutable commit. Verify the commit/tree and source according to local supply-chain policy; do not assume the recommended `sqoia-dev/ood-pbs-file-restore` path exists until it has been separately published.
+Verify the commit/tree and source according to local supply-chain policy.
 
 ## 3. Prepare a dedicated PBS token
 
@@ -187,7 +191,8 @@ Sign in as the canary and open `/pun/sys/pbs-file-restore`. Verify:
 
 1. The page loads without a Python or Passenger error.
 2. Available snapshot dates appear.
-3. Browsing never shows another user's top-level archive.
+3. Browsing both one retained legacy snapshot and one split snapshot never
+   shows another user's top-level archive.
 4. A small file restores below the configured home and restore directory.
 5. The original live file is not overwritten.
 6. A second restore creates a new job directory.
@@ -223,7 +228,7 @@ Common failures:
 | App reports restore service unavailable | Sudo rule, installed client, SSH key modes, pinned host key, forced command |
 | Broker reports incomplete environment | Four required `PBS_*` values, file syntax, no `export`, mode `0600` |
 | PBS request fails | DNS, TCP 8007, TLS trust, API URL, token ID/secret, datastore ACL |
-| No snapshots appear | Backup type/ID, configured window, and presence of both required archive files |
+| No snapshots appear | Backup type/ID, configured window, and a complete legacy or split archive pair |
 | Authenticated account rejected | Matching NSS, UID at least 1000, allowed username syntax, exact `/home/<username>` |
 | Directory restore fails | PBS returned ZIP structure, free staging space, symlink/traversal rejection |
 | Page cannot find dashboard assets | Open OnDemand version or nonstandard dashboard asset location |

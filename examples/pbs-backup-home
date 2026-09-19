@@ -5,9 +5,16 @@ umask 077
 readonly env_file=/etc/pbs-home-backup-writer.env
 readonly log_file=/var/log/pbs-home-backup.log
 readonly lock_file=/run/lock/pbs-home-backup.lock
+readonly state_dir=/var/lib/pbs-home-backup
+readonly split_ready_file="$state_dir/split-baseline-complete"
 
 [[ ${EUID} -eq 0 ]] || { echo "Run as root." >&2; exit 1; }
 [[ -r $env_file ]] || { echo "Missing $env_file" >&2; exit 1; }
+
+if [[ $# -gt 1 ]]; then
+  echo "Usage: $0 [data|metadata]" >&2
+  exit 2
+fi
 
 # shellcheck disable=SC1090
 source "$env_file"
@@ -17,7 +24,45 @@ source "$env_file"
 : "${PBS_HOME_BACKUP_ARCHIVE:?missing PBS_HOME_BACKUP_ARCHIVE}"
 : "${PBS_HOME_BACKUP_SOURCE:?missing PBS_HOME_BACKUP_SOURCE}"
 : "${PBS_HOME_BACKUP_ID:?missing PBS_HOME_BACKUP_ID}"
+: "${PBS_HOME_BACKUP_DAILY_MODE:?missing PBS_HOME_BACKUP_DAILY_MODE}"
+: "${PBS_HOME_BACKUP_FULL_SCAN_WEEKDAY:?missing PBS_HOME_BACKUP_FULL_SCAN_WEEKDAY}"
 export PBS_PASSWORD PBS_FINGERPRINT PBS_REPOSITORY
+
+if [[ $PBS_HOME_BACKUP_DAILY_MODE != metadata ]]; then
+  echo "Daily mode must be metadata for the managed split-archive policy." >&2
+  exit 2
+fi
+if [[ ! $PBS_HOME_BACKUP_FULL_SCAN_WEEKDAY =~ ^[1-7]$ ]]; then
+  echo "Full-scan weekday must be an ISO weekday from 1 through 7." >&2
+  exit 2
+fi
+
+requested_mode=${1:-}
+if [[ -n $requested_mode && $requested_mode != data && $requested_mode != metadata ]]; then
+  echo "Usage: $0 [data|metadata]" >&2
+  exit 2
+fi
+
+if [[ -n $requested_mode ]]; then
+  change_detection_mode=$requested_mode
+  mode_reason=explicit
+elif [[ ! -s $split_ready_file ]]; then
+  change_detection_mode=data
+  mode_reason=baseline-required
+elif [[ $(date +%u) == "$PBS_HOME_BACKUP_FULL_SCAN_WEEKDAY" ]]; then
+  change_detection_mode=data
+  mode_reason=weekly-assurance
+else
+  change_detection_mode=$PBS_HOME_BACKUP_DAILY_MODE
+  mode_reason=daily-incremental
+fi
+
+if [[ ! -s $split_ready_file && $change_detection_mode != data ]]; then
+  echo "A successful data-mode split baseline is required before metadata mode." >&2
+  exit 1
+fi
+
+install -d -o root -g root -m 0700 "$state_dir"
 
 exec 9>"$lock_file"
 if ! flock --nonblock 9; then
@@ -26,15 +71,22 @@ if ! flock --nonblock 9; then
 fi
 
 exec >> "$log_file" 2>&1
-echo "$(date --iso-8601=seconds) backup started"
+echo "$(date --iso-8601=seconds) backup started mode=$change_detection_mode reason=$mode_reason"
 if /usr/local/sbin/proxmox-backup-client backup \
   "${PBS_HOME_BACKUP_ARCHIVE}:${PBS_HOME_BACKUP_SOURCE}" \
   --backup-type host \
   --backup-id "$PBS_HOME_BACKUP_ID" \
-  --repository "$PBS_REPOSITORY"; then
-  echo "$(date --iso-8601=seconds) backup completed"
+  --repository "$PBS_REPOSITORY" \
+  --change-detection-mode "$change_detection_mode"; then
+  if [[ $change_detection_mode == data ]]; then
+    marker_tmp="$split_ready_file.tmp.$$"
+    printf '%s mode=data\n' "$(date --iso-8601=seconds)" > "$marker_tmp"
+    chmod 0600 "$marker_tmp"
+    mv -f "$marker_tmp" "$split_ready_file"
+  fi
+  echo "$(date --iso-8601=seconds) backup completed mode=$change_detection_mode"
 else
   status=$?
-  echo "$(date --iso-8601=seconds) backup failed with status $status"
+  echo "$(date --iso-8601=seconds) backup failed mode=$change_detection_mode status=$status"
   exit "$status"
 fi

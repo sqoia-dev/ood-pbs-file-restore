@@ -10,12 +10,18 @@ All notable changes to this project are documented here. The project follows
 - Validated shared site configuration and JSON Schema.
 - Idempotent portal/broker installer with dry-run, staging, and bounded uninstall.
 - Automated configuration, installer, path, SSH, and ZIP-confinement tests.
+- Per-snapshot support for both legacy `pxar`/catalog and split
+  `mpxar`/`ppxar` archives, including layout and confinement tests.
+- A guarded split-archive backup-writer policy with a required data baseline
+  and weekly data-mode assurance scan.
 
 ### Changed
 
 - Product documentation and UI identify PBS File Restore for Open OnDemand by Sqoia Labs.
 - Portal, application, and broker settings now come from non-secret `site.json` rather than Python source edits.
 - Directory extraction defers symbolic links so an archive link cannot become a later extraction parent.
+- Site configuration validates all four legacy/split archive filenames; split
+  requests pass only the configured metadata archive as PBS `archive-name`.
 
 ## [1.0.2] - 2026-08-07
 

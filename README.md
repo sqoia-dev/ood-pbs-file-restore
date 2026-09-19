@@ -5,6 +5,8 @@ A security-bound Open OnDemand companion application for authenticated users to 
 ## What it provides
 
 - Date-based snapshot selection and catalog browsing in Open OnDemand.
+- Automatic per-snapshot support for legacy `pxar`/catalog and split
+  `mpxar`/`ppxar` archives during mixed-retention transitions.
 - Effective-user confinement at the Passenger, sudo client, SSH, broker, archive, and filesystem boundaries.
 - Root-only PBS credentials on the broker; the portal and user Passenger process never receive them.
 - Non-overwriting restores beneath a configurable directory (default `~/.pbs-restores`).
@@ -20,18 +22,25 @@ Browser -> user Passenger app -> constrained sudo client
 
 ## Evidence boundary
 
-The reference workflow was checked live on **2026-08-07** with:
+The original restore workflow was checked live on **2026-08-07**. The imported
+split-archive producer and restore workflow was checked upstream on
+**2026-09-16** with PBS and static client 4.2.5; the Sqoia productization still
+requires the local canary acceptance tests below.
 
 | Role | Live-tested versions |
 | --- | --- |
 | Open OnDemand portal | Rocky Linux 9.8, Open OnDemand 4.2.3, Python 3.9.25, PyYAML 5.4.1, OpenSSH 9.9p1 |
 | Broker and backup source | Red Hat Enterprise Linux 8.10, Python 3.6.8, OpenSSH 8.0p1 |
-| Static backup client (optional producer only) | `proxmox-backup-client` 4.2.3 on RHEL 8.9/8.10 and Rocky Linux 9.8 x86_64 |
-| PBS server | Debian 13, PBS runtime 4.2.2 with server package 4.2.5-1 installed |
+| Static backup client (optional producer only) | `proxmox-backup-client` 4.2.5 on RHEL 8.9/8.10 and Rocky Linux 9.8 x86_64 |
+| PBS server | Debian 13, PBS runtime 4.2.5 with server package 4.2.5-1 installed |
 
 Python 3.6.8 describes the live broker evidence but is end-of-life; new deployments should use Python 3.9 or later. Comparable platforms are candidates, not supported claims, until a site canary passes.
 
-Only the `shared-home-v1` model is implemented: one `host` backup group, a pxar archive containing one top-level directory per username, matching Unix identities, and a broker with direct access to the managed home filesystem. PBS namespaces, per-user backup groups, alternate mappings, and arbitrary home layouts are not implemented.
+Only the `shared-home-v1` model is implemented: one `host` backup group, a
+legacy or split archive containing one top-level directory per username,
+matching Unix identities, and a broker with direct access to the managed home
+filesystem. PBS namespaces, per-user backup groups, alternate mappings, and
+arbitrary home layouts are not implemented.
 
 ## Safe configuration
 
@@ -96,7 +105,8 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for exact security gates and [docs/
 
 ## Limitations
 
-- Shared-home archive layout only.
+- Shared-home backup-group and first-level username layout only; both legacy
+  and split PBS archive formats are supported.
 - Synchronous restores; no built-in per-user byte quotas or rate limits.
 - Individual symbolic links must be restored through their parent directory.
 - Standalone restored files are reduced to mode `0600`.
