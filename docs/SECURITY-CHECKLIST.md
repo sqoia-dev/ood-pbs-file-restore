@@ -47,6 +47,10 @@ security boundary, not an ordinary web application.
 ## Acceptance and operations
 
 - [ ] Snapshot listing and catalog browsing pass with a synthetic canary user.
+- [ ] Legacy and split snapshots are each detected only when their complete
+  required file pair is present.
+- [ ] Split browsing and downloads pass `root.mpxar.didx` only as the trusted
+  PBS `archive-name` parameter; user input cannot select an archive.
 - [ ] A request containing another `user` value cannot change effective identity.
 - [ ] Absolute-path and `..` tokens are rejected.
 - [ ] A small file restore lands only below the configured restore tree.

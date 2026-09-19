@@ -75,7 +75,7 @@ Keep these values in root-owned deployment configuration or environment files:
 | API token identifier | current owner token | `pbs_auth_id` |
 | Snapshot type | `host` | `pbs_backup_type` |
 | Snapshot ID | storage host name | `pbs_backup_id` |
-| Archive name | `root.pxar.didx` | `pbs_archive_name` |
+| Archive names | `root.pxar.didx` or `root.mpxar.didx` plus `root.ppxar.didx` | `pbs_archive_layouts` |
 | Archive user prefix | first component under `/home` | `archive_user_path_template` |
 | Retention shown | 31 days | `snapshot_max_age_days` |
 | Home root | `/home` | `home_root` |
@@ -101,9 +101,13 @@ One snapshot group contains `/home`, with users as first-level paths:
 
 ```text
 host/storage-server -> root.pxar.didx/<username>/...
+                    -> root.mpxar.didx + root.ppxar.didx
 ```
 
-This is the current tested implementation.
+The broker detects the format independently for each snapshot, allowing legacy
+and split snapshots to coexist through a retention transition. Split requests
+send the metadata archive as PBS's `archive-name` parameter while preserving
+the same authenticated-user path boundary.
 
 ### Per-user snapshot groups
 

@@ -3,8 +3,10 @@
   "deployment_model": "shared-home-v1",
   "broker": {
     "backup_type": "host",
-    "archive_name": "root.pxar.didx",
-    "catalog_name": "catalog.pcat1.didx",
+    "legacy_archive_name": "root.pxar.didx",
+    "legacy_catalog_name": "catalog.pcat1.didx",
+    "split_archive_name": "root.mpxar.didx",
+    "split_payload_name": "root.ppxar.didx",
     "home_root": "/home",
     "staging_root": "/home/.pbs-restore-staging",
     "snapshot_max_age_days": 31,

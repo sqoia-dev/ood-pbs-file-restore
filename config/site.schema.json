@@ -10,11 +10,33 @@
     "deployment_model": {"const": "shared-home-v1"},
     "broker": {
       "type": "object", "additionalProperties": false,
-      "required": ["backup_type", "archive_name", "catalog_name", "home_root", "staging_root", "snapshot_max_age_days", "secret_env_file"],
+      "required": ["backup_type", "home_root", "staging_root", "snapshot_max_age_days", "secret_env_file"],
+      "oneOf": [
+        {
+          "required": ["archive_name", "catalog_name"],
+          "not": {"anyOf": [
+            {"required": ["legacy_archive_name"]},
+            {"required": ["legacy_catalog_name"]},
+            {"required": ["split_archive_name"]},
+            {"required": ["split_payload_name"]}
+          ]}
+        },
+        {
+          "required": ["legacy_archive_name", "legacy_catalog_name", "split_archive_name", "split_payload_name"],
+          "not": {"anyOf": [
+            {"required": ["archive_name"]},
+            {"required": ["catalog_name"]}
+          ]}
+        }
+      ],
       "properties": {
         "backup_type": {"const": "host"},
         "archive_name": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", "not": {"pattern": "[\\u0000-\\u001F\\u007F]"}},
         "catalog_name": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", "not": {"pattern": "[\\u0000-\\u001F\\u007F]"}},
+        "legacy_archive_name": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", "not": {"pattern": "[\\u0000-\\u001F\\u007F]"}},
+        "legacy_catalog_name": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", "not": {"pattern": "[\\u0000-\\u001F\\u007F]"}},
+        "split_archive_name": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", "not": {"pattern": "[\\u0000-\\u001F\\u007F]"}},
+        "split_payload_name": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", "not": {"pattern": "[\\u0000-\\u001F\\u007F]"}},
         "home_root": {"type": "string", "minLength": 2, "maxLength": 512, "pattern": "^/(?!.*(?:/\\.{1,2}(?:/|$)|//)).*[^/]$", "not": {"pattern": "[\\u0000-\\u001F\\u007F]"}},
         "staging_root": {"type": "string", "minLength": 2, "maxLength": 512, "pattern": "^/(?!.*(?:/\\.{1,2}(?:/|$)|//)).*[^/]$", "not": {"pattern": "[\\u0000-\\u001F\\u007F]"}},
         "snapshot_max_age_days": {"type": "integer", "minimum": 1, "maximum": 366},

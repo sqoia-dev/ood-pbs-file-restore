@@ -142,9 +142,44 @@ def encode_token(relative):
     return base64.b64encode(relative).decode("ascii")
 
 
-def archive_prefix(username):
-    archive_name = site_config()["broker"]["archive_name"]
-    return ("/%s/%s" % (archive_name, username)).encode("utf-8")
+def archive_layout(filenames):
+    broker_config = site_config()["broker"]
+    layouts = (
+        (
+            "legacy",
+            broker_config["legacy_archive_name"],
+            frozenset((broker_config["legacy_archive_name"], broker_config["legacy_catalog_name"])),
+        ),
+        (
+            "split",
+            broker_config["split_archive_name"],
+            frozenset((broker_config["split_archive_name"], broker_config["split_payload_name"])),
+        ),
+    )
+    for format_name, archive_name, required in layouts:
+        if required.issubset(filenames):
+            return {"format": format_name, "archive": archive_name}
+    return None
+
+
+def archive_prefix(username, snapshot):
+    if snapshot["archive_format"] == "legacy":
+        return ("/%s/%s" % (snapshot["archive_name"], username)).encode("utf-8")
+    if snapshot["archive_format"] == "split":
+        return ("/%s" % username).encode("utf-8")
+    raise BrokerError("unsupported backup archive format")
+
+
+def snapshot_api_params(snapshot, epoch, filepath):
+    params = {
+        "backup-type": site_config()["broker"]["backup_type"],
+        "backup-id": snapshot["backup_id"],
+        "backup-time": epoch,
+        "filepath": base64.b64encode(filepath).decode("ascii"),
+    }
+    if snapshot["archive_format"] == "split":
+        params["archive-name"] = snapshot["archive_name"]
+    return params
 
 
 def api_call(endpoint, params, environment):
@@ -217,8 +252,8 @@ def available_snapshots(environment):
             for item in files
             if isinstance(item, dict) and isinstance(item.get("filename"), str)
         }
-        required_snapshot_files = frozenset((broker_config["archive_name"], broker_config["catalog_name"]))
-        if not required_snapshot_files.issubset(filenames):
+        layout = archive_layout(filenames)
+        if layout is None:
             continue
         instant = datetime.datetime.fromtimestamp(
             stamp, tz=datetime.timezone.utc
@@ -229,6 +264,9 @@ def available_snapshots(environment):
                 "timestamp": instant.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "date": instant.strftime("%Y-%m-%d"),
                 "protected": bool(entry.get("protected", False)),
+                "archive_format": layout["format"],
+                "archive_name": layout["archive"],
+                "backup_id": environment["PBS_BACKUP_ID"],
             }
         )
     snapshots.sort(key=lambda item: item["epoch"], reverse=True)
@@ -239,26 +277,27 @@ def require_snapshot(epoch, environment):
     if isinstance(epoch, bool) or not isinstance(epoch, int):
         raise BrokerError("invalid backup snapshot")
     snapshots = available_snapshots(environment)
-    if epoch not in {item["epoch"] for item in snapshots}:
-        raise BrokerError("backup snapshot is unavailable")
-    return datetime.datetime.fromtimestamp(
-        epoch, tz=datetime.timezone.utc
-    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    for snapshot in snapshots:
+        if snapshot["epoch"] == epoch:
+            return snapshot
+    raise BrokerError("backup snapshot is unavailable")
+
+
+def public_snapshot(snapshot):
+    return {
+        key: snapshot[key]
+        for key in ("epoch", "timestamp", "date", "protected")
+    }
 
 
 def list_directory(username, epoch, token, environment):
-    require_snapshot(epoch, environment)
+    snapshot = require_snapshot(epoch, environment)
     relative = decode_token(token)
-    prefix = archive_prefix(username)
+    prefix = archive_prefix(username, snapshot)
     full_path = prefix + (b"/" + relative if relative else b"")
     entries = api_call(
         "catalog",
-        {
-            "backup-type": site_config()["broker"]["backup_type"],
-            "backup-id": environment["PBS_BACKUP_ID"],
-            "backup-time": epoch,
-            "filepath": base64.b64encode(full_path).decode("ascii"),
-        },
+        snapshot_api_params(snapshot, epoch, full_path),
         environment,
     )
     safe_entries = []
@@ -270,9 +309,10 @@ def list_directory(username, epoch, token, environment):
             decoded = base64.b64decode(entry["filepath"], validate=True)
         except (KeyError, ValueError):
             raise BrokerError("PBS returned an invalid catalog path")
-        if not decoded.startswith(required_prefix):
+        normalized = decoded[1:] if decoded.startswith(b"/") else decoded
+        if normalized.startswith(b"/") or not normalized.startswith(required_prefix):
             raise BrokerError("PBS returned a path outside the user boundary")
-        child_relative = decoded[len(required_prefix) :]
+        child_relative = normalized[len(required_prefix) :]
         decode_token(encode_token(child_relative))
         safe_entries.append(
             {
@@ -434,7 +474,7 @@ def restore_path(username, epoch, token, environment):
         raise BrokerError("select a file or directory to restore")
     metadata = entry_metadata(username, epoch, relative, environment)
 
-    date = snapshot[:10]
+    date = snapshot["date"]
     job_id = datetime.datetime.now(datetime.timezone.utc).strftime(
         "%H%M%SZ-"
     ) + uuid.uuid4().hex[:8]
@@ -447,15 +487,10 @@ def restore_path(username, epoch, token, environment):
     descriptors = []
     try:
         download = os.path.join(staging, "download")
-        full_path = archive_prefix(username) + b"/" + relative
+        full_path = archive_prefix(username, snapshot) + b"/" + relative
         api_download(
             "pxar-file-download",
-            {
-                "backup-type": site_config()["broker"]["backup_type"],
-                "backup-id": environment["PBS_BACKUP_ID"],
-                "backup-time": epoch,
-                "filepath": base64.b64encode(full_path).decode("ascii"),
-            },
+            snapshot_api_params(snapshot, epoch, full_path),
             environment,
             download,
         )
@@ -498,12 +533,12 @@ def restore_path(username, epoch, token, environment):
         logger().info(
             "user=%s action=restore snapshot=%s destination=%s",
             username,
-            snapshot,
+            snapshot["timestamp"],
             visible_destination,
         )
         return {
             "restored_to": visible_destination,
-            "snapshot": snapshot,
+            "snapshot": snapshot["timestamp"],
             "overwrite": False,
         }
     finally:
@@ -521,7 +556,12 @@ def dispatch(request):
     environment = load_environment()
     action = request.get("action")
     if action == "snapshots":
-        return {"snapshots": available_snapshots(environment)}
+        return {
+            "snapshots": [
+                public_snapshot(snapshot)
+                for snapshot in available_snapshots(environment)
+            ]
+        }
     if action == "list":
         return list_directory(
             username, request.get("snapshot"), request.get("path", ""), environment

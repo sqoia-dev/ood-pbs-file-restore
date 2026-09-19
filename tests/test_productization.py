@@ -41,6 +41,35 @@ class ConfigurationTests(unittest.TestCase):
         with self.assertRaises(ConfigError):
             validate(changed)
 
+    def test_schema_v1_legacy_archive_keys_are_normalized(self):
+        legacy = copy.deepcopy(self.config)
+        broker_config = legacy["broker"]
+        broker_config["archive_name"] = broker_config.pop("legacy_archive_name")
+        broker_config["catalog_name"] = broker_config.pop("legacy_catalog_name")
+        broker_config.pop("split_archive_name")
+        broker_config.pop("split_payload_name")
+
+        normalized = validate(legacy)
+        schema = json.loads((ROOT / "config/site.schema.json").read_text())
+        jsonschema.validate(legacy, schema)
+
+        self.assertEqual(normalized["broker"]["legacy_archive_name"], "root.pxar.didx")
+        self.assertEqual(normalized["broker"]["legacy_catalog_name"], "catalog.pcat1.didx")
+        self.assertEqual(normalized["broker"]["split_archive_name"], "root.mpxar.didx")
+        self.assertEqual(normalized["broker"]["split_payload_name"], "root.ppxar.didx")
+        self.assertNotIn("archive_name", normalized["broker"])
+        self.assertIn("archive_name", legacy["broker"])
+
+    def test_schema_v1_rejects_mixed_archive_key_families(self):
+        changed = copy.deepcopy(self.config)
+        changed["broker"]["archive_name"] = "root.pxar.didx"
+        schema = json.loads((ROOT / "config/site.schema.json").read_text())
+
+        with self.assertRaises(ConfigError):
+            validate(changed)
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.validate(changed, schema)
+
     def test_unsupported_layout_fails_closed(self):
         changed = copy.deepcopy(self.config)
         changed["deployment_model"] = "per-user"
@@ -62,7 +91,7 @@ class ConfigurationTests(unittest.TestCase):
     def test_schema_and_runtime_reject_the_same_security_variants(self):
         schema = json.loads((ROOT / "config/site.schema.json").read_text())
         variants = [
-            ("broker", "archive_name", "archive\nname"),
+            ("broker", "legacy_archive_name", "archive\nname"),
             ("broker", "home_root", "/"),
             ("broker", "staging_root", "/var//tmp"),
             ("broker", "staging_root", "/var/\nrestore"),
@@ -78,7 +107,8 @@ class ConfigurationTests(unittest.TestCase):
             ("app", "description", "bad\nname"),
         ]
         string_fields = (
-            ("broker", "archive_name"), ("broker", "catalog_name"),
+            ("broker", "legacy_archive_name"), ("broker", "legacy_catalog_name"),
+            ("broker", "split_archive_name"), ("broker", "split_payload_name"),
             ("broker", "home_root"), ("broker", "staging_root"), ("broker", "secret_env_file"),
             ("portal", "broker_ssh_target"), ("portal", "ssh_private_key"),
             ("portal", "known_hosts"), ("portal", "client_path"),
@@ -134,7 +164,8 @@ class SecurityBoundaryTests(unittest.TestCase):
                 broker.decode_token(base64.b64encode(raw).decode("ascii"))
 
     def test_archive_prefix_is_identity_derived(self):
-        self.assertEqual(broker.archive_prefix("alice"), b"/root.pxar.didx/alice")
+        snapshot = {"archive_format": "legacy", "archive_name": "root.pxar.didx"}
+        self.assertEqual(broker.archive_prefix("alice", snapshot), b"/root.pxar.didx/alice")
 
     def test_broker_requires_https_without_disclosing_secret(self):
         changed = copy.deepcopy(load(str(ROOT / "config/site.example.json")))
