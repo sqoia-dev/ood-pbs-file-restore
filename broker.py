@@ -283,6 +283,13 @@ def require_snapshot(epoch, environment):
     raise BrokerError("backup snapshot is unavailable")
 
 
+def public_snapshot(snapshot):
+    return {
+        key: snapshot[key]
+        for key in ("epoch", "timestamp", "date", "protected")
+    }
+
+
 def list_directory(username, epoch, token, environment):
     snapshot = require_snapshot(epoch, environment)
     relative = decode_token(token)
@@ -549,7 +556,12 @@ def dispatch(request):
     environment = load_environment()
     action = request.get("action")
     if action == "snapshots":
-        return {"snapshots": available_snapshots(environment)}
+        return {
+            "snapshots": [
+                public_snapshot(snapshot)
+                for snapshot in available_snapshots(environment)
+            ]
+        }
     if action == "list":
         return list_directory(
             username, request.get("snapshot"), request.get("path", ""), environment

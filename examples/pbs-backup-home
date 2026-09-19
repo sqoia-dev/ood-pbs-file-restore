@@ -6,7 +6,6 @@ readonly env_file=/etc/pbs-home-backup-writer.env
 readonly log_file=/var/log/pbs-home-backup.log
 readonly lock_file=/run/lock/pbs-home-backup.lock
 readonly state_dir=/var/lib/pbs-home-backup
-readonly split_ready_file="$state_dir/split-baseline-complete"
 
 [[ ${EUID} -eq 0 ]] || { echo "Run as root." >&2; exit 1; }
 [[ -r $env_file ]] || { echo "Missing $env_file" >&2; exit 1; }
@@ -28,6 +27,18 @@ source "$env_file"
 : "${PBS_HOME_BACKUP_FULL_SCAN_WEEKDAY:?missing PBS_HOME_BACKUP_FULL_SCAN_WEEKDAY}"
 export PBS_PASSWORD PBS_FINGERPRINT PBS_REPOSITORY
 
+backup_identity=$(
+  printf '%s\0%s\0%s\0%s\0' \
+    "$PBS_REPOSITORY" \
+    "$PBS_HOME_BACKUP_ID" \
+    "$PBS_HOME_BACKUP_ARCHIVE" \
+    "$PBS_HOME_BACKUP_SOURCE" |
+    sha256sum
+)
+readonly backup_identity=${backup_identity%% *}
+readonly split_ready_file="$state_dir/split-baseline-$backup_identity"
+readonly expected_marker="identity_sha256=$backup_identity"
+
 if [[ $PBS_HOME_BACKUP_DAILY_MODE != metadata ]]; then
   echo "Daily mode must be metadata for the managed split-archive policy." >&2
   exit 2
@@ -43,10 +54,18 @@ if [[ -n $requested_mode && $requested_mode != data && $requested_mode != metada
   exit 2
 fi
 
+baseline_ready=false
+if [[ -s $split_ready_file ]]; then
+  IFS= read -r recorded_marker < "$split_ready_file" || true
+  if [[ $recorded_marker == "$expected_marker" ]]; then
+    baseline_ready=true
+  fi
+fi
+
 if [[ -n $requested_mode ]]; then
   change_detection_mode=$requested_mode
   mode_reason=explicit
-elif [[ ! -s $split_ready_file ]]; then
+elif [[ $baseline_ready != true ]]; then
   change_detection_mode=data
   mode_reason=baseline-required
 elif [[ $(date +%u) == "$PBS_HOME_BACKUP_FULL_SCAN_WEEKDAY" ]]; then
@@ -57,7 +76,7 @@ else
   mode_reason=daily-incremental
 fi
 
-if [[ ! -s $split_ready_file && $change_detection_mode != data ]]; then
+if [[ $baseline_ready != true && $change_detection_mode != data ]]; then
   echo "A successful data-mode split baseline is required before metadata mode." >&2
   exit 1
 fi
@@ -80,7 +99,8 @@ if /usr/local/sbin/proxmox-backup-client backup \
   --change-detection-mode "$change_detection_mode"; then
   if [[ $change_detection_mode == data ]]; then
     marker_tmp="$split_ready_file.tmp.$$"
-    printf '%s mode=data\n' "$(date --iso-8601=seconds)" > "$marker_tmp"
+    printf '%s\ncompleted_at=%s\nmode=data\n' \
+      "$expected_marker" "$(date --iso-8601=seconds)" > "$marker_tmp"
     chmod 0600 "$marker_tmp"
     mv -f "$marker_tmp" "$split_ready_file"
   fi

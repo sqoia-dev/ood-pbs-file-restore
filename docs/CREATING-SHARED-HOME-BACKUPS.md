@@ -138,10 +138,13 @@ Set:
 - an ISO weekday from 1 through 7 for the weekly `data` assurance scan.
 
 The wrapper uses `flock` to reject overlapping runs and writes
-`/var/log/pbs-home-backup.log`. Until a successful `data` run creates
-`/var/lib/pbs-home-backup/split-baseline-complete`, it refuses metadata mode
-and automatically selects data mode. Afterward, ordinary runs use metadata
-mode except on the configured weekly assurance day.
+`/var/log/pbs-home-backup.log`. It scopes each baseline marker to a SHA-256 of
+the PBS repository, backup ID, archive name, and source path. Until a successful
+`data` run creates and validates the corresponding
+`/var/lib/pbs-home-backup/split-baseline-<identity-sha256>` marker, it refuses
+metadata mode and automatically selects data mode. Changing any of those four
+inputs therefore requires a fresh data baseline. Afterward, ordinary runs use
+metadata mode except on the configured weekly assurance day.
 
 ## Prepare PBS maintenance and capacity
 

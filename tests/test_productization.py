@@ -41,6 +41,35 @@ class ConfigurationTests(unittest.TestCase):
         with self.assertRaises(ConfigError):
             validate(changed)
 
+    def test_schema_v1_legacy_archive_keys_are_normalized(self):
+        legacy = copy.deepcopy(self.config)
+        broker_config = legacy["broker"]
+        broker_config["archive_name"] = broker_config.pop("legacy_archive_name")
+        broker_config["catalog_name"] = broker_config.pop("legacy_catalog_name")
+        broker_config.pop("split_archive_name")
+        broker_config.pop("split_payload_name")
+
+        normalized = validate(legacy)
+        schema = json.loads((ROOT / "config/site.schema.json").read_text())
+        jsonschema.validate(legacy, schema)
+
+        self.assertEqual(normalized["broker"]["legacy_archive_name"], "root.pxar.didx")
+        self.assertEqual(normalized["broker"]["legacy_catalog_name"], "catalog.pcat1.didx")
+        self.assertEqual(normalized["broker"]["split_archive_name"], "root.mpxar.didx")
+        self.assertEqual(normalized["broker"]["split_payload_name"], "root.ppxar.didx")
+        self.assertNotIn("archive_name", normalized["broker"])
+        self.assertIn("archive_name", legacy["broker"])
+
+    def test_schema_v1_rejects_mixed_archive_key_families(self):
+        changed = copy.deepcopy(self.config)
+        changed["broker"]["archive_name"] = "root.pxar.didx"
+        schema = json.loads((ROOT / "config/site.schema.json").read_text())
+
+        with self.assertRaises(ConfigError):
+            validate(changed)
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.validate(changed, schema)
+
     def test_unsupported_layout_fails_closed(self):
         changed = copy.deepcopy(self.config)
         changed["deployment_model"] = "per-user"

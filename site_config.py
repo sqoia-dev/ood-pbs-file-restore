@@ -10,6 +10,8 @@ DEFAULT_CONFIG_PATH = "/etc/ood-pbs-file-restore/site.json"
 _SIMPLE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _PATH_COMPONENT = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 _SSH_TARGET = re.compile(r"^root@[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
+_DEFAULT_SPLIT_ARCHIVE_NAME = "root.mpxar.didx"
+_DEFAULT_SPLIT_PAYLOAD_NAME = "root.ppxar.didx"
 
 
 class ConfigError(ValueError):
@@ -57,8 +59,26 @@ def validate(config):
     if config["deployment_model"] != "shared-home-v1":
         raise ConfigError("only the live-tested shared-home-v1 deployment model is implemented")
 
-    broker = _object(config["broker"], "broker")
-    _exact_keys(broker, ("backup_type", "legacy_archive_name", "legacy_catalog_name", "split_archive_name", "split_payload_name", "home_root", "staging_root", "snapshot_max_age_days", "secret_env_file"), "broker")
+    broker = dict(_object(config["broker"], "broker"))
+    common_broker_keys = (
+        "backup_type", "home_root", "staging_root", "snapshot_max_age_days",
+        "secret_env_file",
+    )
+    legacy_v1_keys = ("archive_name", "catalog_name")
+    current_v1_keys = (
+        "legacy_archive_name", "legacy_catalog_name", "split_archive_name",
+        "split_payload_name",
+    )
+    if any(key in broker for key in legacy_v1_keys):
+        _exact_keys(broker, common_broker_keys + legacy_v1_keys, "broker")
+        broker["legacy_archive_name"] = broker.pop("archive_name")
+        broker["legacy_catalog_name"] = broker.pop("catalog_name")
+        broker["split_archive_name"] = _DEFAULT_SPLIT_ARCHIVE_NAME
+        broker["split_payload_name"] = _DEFAULT_SPLIT_PAYLOAD_NAME
+    else:
+        _exact_keys(broker, common_broker_keys + current_v1_keys, "broker")
+    config = dict(config)
+    config["broker"] = broker
     if broker["backup_type"] != "host":
         raise ConfigError("broker.backup_type must remain host for shared-home-v1")
     for key in ("legacy_archive_name", "legacy_catalog_name", "split_archive_name", "split_payload_name"):

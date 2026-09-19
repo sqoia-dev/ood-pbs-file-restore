@@ -22,6 +22,12 @@ All notable changes to this project are documented here. The project follows
 - Directory extraction defers symbolic links so an archive link cannot become a later extraction parent.
 - Site configuration validates all four legacy/split archive filenames; split
   requests pass only the configured metadata archive as PBS `archive-name`.
+- Schema-v1 configurations using the original `archive_name` and
+  `catalog_name` keys remain accepted and are normalized to the split-aware
+  model.
+- Backup baseline markers are bound to repository, backup ID, archive, and
+  source identity; browser snapshot responses no longer expose internal PBS
+  group or archive identifiers.
 
 ## [1.0.2] - 2026-08-07
 

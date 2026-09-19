@@ -86,6 +86,33 @@ class ArchiveLayoutTests(unittest.TestCase):
             all(item["backup_id"] == "storage-server" for item in snapshots)
         )
 
+    @mock.patch.object(broker, "available_snapshots")
+    @mock.patch.object(broker, "load_environment")
+    @mock.patch.object(broker, "identity")
+    def test_snapshot_action_returns_only_public_fields(
+        self, identity, load_environment, available_snapshots
+    ):
+        load_environment.return_value = {"PBS_BACKUP_ID": "storage-server"}
+        available_snapshots.return_value = [snapshot("split")]
+
+        response = broker.dispatch({"action": "snapshots", "user": "alice"})
+
+        self.assertEqual(
+            response,
+            {
+                "snapshots": [
+                    {
+                        "epoch": 1789595082,
+                        "timestamp": "2026-09-16T21:44:42Z",
+                        "date": "2026-09-16",
+                        "protected": False,
+                    }
+                ]
+            },
+        )
+        self.assertNotIn("backup_id", response["snapshots"][0])
+        self.assertNotIn("archive_name", response["snapshots"][0])
+
     @mock.patch.object(broker, "api_call")
     @mock.patch.object(broker, "require_snapshot")
     def test_split_catalog_uses_archive_parameter(self, require_snapshot, api_call):
